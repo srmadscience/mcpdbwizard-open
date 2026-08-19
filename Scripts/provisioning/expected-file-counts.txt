@@ -1,0 +1,147 @@
+# Minimum number of .java files each propfile must generate.
+#
+# WHY: generation can lose its database connection part-way -- ORA-17008 mid-run --
+# and still exit 0 with "Finished processing file" in the log. The result is a tree
+# with a handful of files instead of hundreds, and NOTHING else notices:
+#
+#   2026-08-02, ORCL19: generic_testf produced 1 file instead of 206. The suite
+#   still reported 336/0/2, because no harness imports generic_testf. It was found
+#   only by comparing total file counts against another box by hand.
+#
+# The provisioning check verifies that fixtures exist BEFORE generation. This file
+# covers the other end: that generation actually produced them.
+#
+# THESE ARE FLOORS, NOT EXACT COUNTS, because the same propfile legitimately yields
+# different totals per Oracle version. 12c returns the full ALL_ARGUMENTS walk while
+# 18c/19c/21c/23ai truncate it and go through the ALL_PLSQL_* synthesis arms, so 12c
+# produces MORE:
+#
+#   generic_test1  2487 on ORCL12  vs  2457 elsewhere
+#
+# 2026-08-11, per-propfile SQL directories (docs/missing-sql-file-plan.md): four floors rose
+# because four configs finally get a statement class they had always asked for and silently
+# not received -- generic_test1(+1, bfilenameFactory) and generic_testf(+5, the flight
+# statements), each with its _mcp sibling. Set from XE18, a TRUNCATING box, because these are
+# cross-version MINIMUMS: ORCL12 measures 2488/2489/211/212 and using its numbers would put
+# the floor above what every other box can reach. The 31 other propfiles did not move at all,
+# which is the check that the change reached only the configs that named the missing files.
+#   generic_test4   131 on ORCL12  vs   129 elsewhere
+#   generic_testb   101 on ORCL12  vs    99 elsewhere
+#   generic_testd   121 on ORCL12  vs   119 elsewhere
+#
+# Each floor below is the LOWEST count observed across the boxes, so a version
+# difference passes and a collapse fails. Update a number here deliberately when a
+# change legitimately alters output -- that edit is the record of the decision.
+#
+# KNOWN LIMITATION: generic_test_23ai generates 182 files on a 23ai-line server but
+# only 61 on an older one, where its fixtures cannot exist (the "hollow" tree). The
+# floor must therefore be 60, so a collapse from 182 to 61 on a 23ai box would slip
+# through this check. (Those two figures read 181/60 until 2026-08-11 and were prose
+# rather than assertions, so nothing caught the drift; measured 182 on BOTH FREE23 and
+# FREE26 and 61 on ORCL12 that day, with this propfile's generator input byte-identical
+# to before -- it has no per-propfile SQL overlay, so the per-propfile-directory work
+# cannot have moved it. The floor of 60 below is what is actually enforced.) That case is already covered elsewhere -- the no-gen23ai Maven
+# profile keys off a deep marker file, and TGen23ai/TGen23aiMcp fail outright against
+# a hollow tree.
+#
+# Format: <propfile> <minimum files>   ('#' comments and blank lines ignored)
+
+# 2026-08-19, two SQL statements withdrawn: 19 floors fell. Eighteen fell by exactly 2 -- one
+# generated class per withdrawn statement -- and generic_test_23ai by 1, which is its HOLLOW tree on a
+# non-23ai box (59 files here; a 23ai-line server generates 181, far above any floor).
+#
+# THE INTERESTING PART IS WHICH CONFIGS MOVED. Only 9 configs (18 with their _mcp siblings)
+# ever NAMED those statements, yet the ones that lost files include generic_test9, testa,
+# testd, teste, testf, testg, testh and connector_none -- which never referenced either statement
+# and whose diffs for this change are EMPTY. Generation also emits .sql files it
+# finds in the directory but that the config never names; that is the design. So a config can
+# lose files with nothing in its own diff to explain it, and a floor cannot be maintained by
+# reasoning about which configs were edited. RE-MEASURE.
+#
+# Measured on XE18 (18c), a truncating box, per the 2026-08-11 note below. Floors were only
+# ever LOWERED here: raising one to this box's number would assert something about boxes this
+# run never touched. generic_test8 (+27) and the connector_json/jsonrpc pairs (+5) measured
+# ABOVE their floors and were deliberately left alone -- those gains predate this change.
+generic_test0          49
+generic_test1        2456
+generic_test2          53
+generic_test3          24
+generic_test4         129
+generic_test5          34
+generic_test6          34
+# generic_test7 was 2457 -- the SAME number as generic_test1, and not by coincidence.
+# Its propfile declared PACKAGE_NAME=generic_test1..., so it generated INTO generic_test1's
+# tree and the counter measured that tree, not test7's. The floor was therefore never
+# checking this propfile at all: test7 selects two objects (COLL_PROC_7, AGENTS) and really
+# emits 30 files. Corrected when the package name was fixed; measured on FREE26.
+generic_test7          30
+generic_test8          73
+generic_test9          68
+generic_test_23ai      59
+generic_testa          70
+generic_testb          99
+generic_testd         117
+generic_teste         204
+generic_testf         209
+generic_testg          99
+generic_testh          99
+
+# --- the MCP_SERVER=YES variants -------------------------------------------
+#
+# One <name>_mcp sibling per propfile, so the MCP emitter is compiled against every
+# schema rather than only generic_test_23ai's 28-routine fixture. Each generates its
+# original's output PLUS one file, the emitted <Factory>McpServer.java -- so with two
+# exceptions every floor below is its original's floor + 1, and that relationship is
+# the quickest way to spot a wrong number here.
+#
+# Measured on FREE26 (26ai Free 23.26). These are single-box numbers, unlike the
+# floors above: a 12c box takes the full ALL_ARGUMENTS walk and produces MORE (see
+# the table above), so FREE26 is at or near the minimum and is safe as a floor. If a
+# box ever reports FEWER, that is a real signal -- investigate before lowering it.
+#
+# The two exceptions:
+#   generic_test7_mcp   31, not 2458. Its original's floor was fiction (see the note
+#                       on generic_test7 above); 30 + 1 is the honest number.
+#   connector_none_mcp  601, not 619 -- XWS_TYPE=NONE emits no connector classes,
+#                       which is the 18-file difference from its two siblings. See the
+#                       connector note below.
+
+generic_test0_mcp          50
+generic_test1_mcp        2457
+generic_test2_mcp          54
+generic_test3_mcp          25
+generic_test4_mcp         130
+generic_test5_mcp          35
+generic_test6_mcp          35
+generic_test7_mcp          31
+generic_test8_mcp          74
+generic_test9_mcp          69
+generic_testa_mcp          71
+generic_testb_mcp         100
+generic_testd_mcp         118
+generic_teste_mcp         205
+generic_testf_mcp         210
+generic_testg_mcp         100
+generic_testh_mcp         100
+connector_json_mcp     619
+connector_jsonrpc_mcp  619
+connector_none_mcp     599
+
+# --- the connector trio ------------------------------------------------
+#
+# These had NO floors until 2026-08-05, and could not have had meaningful ones: all
+# three declared PACKAGE_NAME=com.mcpdbwizard.mcpdbwizardconnector.test.service, so they
+# generated into ONE shared directory and each run measured that directory's
+# cumulative content rather than its own output. All three reported 618 -- including
+# connector_none, which really emits 600, the 18 fewer being the connector
+# classes XWS_TYPE=NONE correctly does not produce. Its 618 was json's and jsonrpc's
+# leftovers being counted as its own, exactly the way generic_test7 was counting
+# generic_test1's tree.
+#
+# Each now has its own package (com.mcpdbwizard.mcpdbwizardconnector.test.<name>), so these
+# are true per-propfile totals. json and jsonrpc genuinely agree at 618: they emit the
+# same class count, differing in connector flavour rather than quantity.
+
+connector_json         618
+connector_jsonrpc      618
+connector_none         598

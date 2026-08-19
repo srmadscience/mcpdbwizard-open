@@ -1,0 +1,31 @@
+MCPDBWizard
+Copyright 2003-2026 ATB Consultancy Services Ltd
+(formerly Orinda Software Ltd, Dublin, Ireland)
+
+This product includes software originally developed at Orinda Software Ltd,
+Dublin, Ireland, under earlier product names. It was renamed MCPDBWizard in
+August 2026, and its Java package namespace was renamed to com.mcpdbwizard at the
+same time. Ownership now rests with ATB Consultancy Services Ltd.
+
+That rename changed the product's name only. It did not transfer, extinguish or
+alter the copyright recorded above. This is why the file headers throughout the
+source still name Orinda Software Ltd as the former owner, and why five files
+retain their 1999 portions-copyright lines naming two predecessor companies: the
+repository holds no record of an assignment from those entities.
+
+Licensed under the Apache License, Version 2.0. See the LICENSE file.
+
+---
+
+Code EMITTED by this generator is your own work and carries no licence obligation
+from this project. It links at run time against com.mcpdbwizard.pub, which is part of
+this repository and is likewise Apache-2.0 licensed, so generated applications may be
+distributed under any terms you choose.
+
+---
+
+Scripts/compile-shims/javax/ejb/ contains minimal, hand-written stand-ins for three
+javax.ejb types (SessionBean, SessionContext, EJBException). They exist only so that
+EJB-flavoured generator output can be COMPILED in the test suite without an EJB
+container on the classpath; they are never loaded at run time and contain no code
+from any Jakarta EE or Java EE implementation.

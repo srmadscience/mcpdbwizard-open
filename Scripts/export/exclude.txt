@@ -1,0 +1,174 @@
+# Paths that never ship in the open-source export.
+#
+# One rsync-style pattern per line; '#' comments and blank lines ignored. Applied by
+# Scripts/export/export-open-source.sh while staging.
+#
+# Anything excluded here is invisible to the leak gate, so exclusion is NOT a way to
+# hide a leak from the check -- it is only for things that have no business in the
+# published tree at all.
+#
+# Exclusion happens HERE rather than by deleting from the repository, because the private
+# tree still needs every one of these: the six-box estate cannot be provisioned without
+# the DDL under sql/. The public tree simply never receives it.
+
+# --- build output ------------------------------------------------------------
+target/
+out/
+*.class
+
+# --- IDE / editor ------------------------------------------------------------
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+
+# --- local, private, or non-redistributable ----------------------------------
+# The real box inventory (templates ship in their place).
+Scripts/tns/tnsnames.ora
+src/test/resources/test-boxes.properties
+
+# Oracle's JDBC driver is not redistributable under any circumstances.
+lib/
+repo/
+*.jar
+
+# --- bulk / historical -------------------------------------------------------
+# 56 MB of validation prototypes, and uncompilable pre-Maven harnesses. Neither is
+# needed to build, test or understand the generator; both are the first thing a
+# visitor would trip over.
+prototypes/
+legacy/
+Scripts/boxes.env
+
+# --- test-schema DDL ---------------------------------------------------------
+# NOT NEGOTIABLE, and the reason is not tidiness: sql/ and OtherDbs/ are not only our own
+# throwaway fixtures. Several of the schemas in them are the table and package layout of
+# THIRD-PARTY systems, carried over from customer work years ago. Structure only -- the data
+# dumps were already gone -- but another organisation's schema is not ours to publish, so
+# both trees stay behind regardless of how useful a fixture would be to a contributor.
+#
+# THIS FILE SHIPS, so it does not name them; the private CLAUDE.md does. That is not
+# secrecy theatre -- an exclusion list that enumerates what it is protecting publishes the
+# index it exists to withhold.
+#
+# The build does not need any of it. No test under src/test/java reads sql/ or
+# OtherDbs/; the live-database tests reach a SERVER, and skip when there is not one.
+# Verified by exporting and running `mvn test` in the staged tree -- see
+# export-open-source.sh, which now does exactly that as its last step.
+#
+# What a contributor loses: the fixtures behind the live tests and the generated-code
+# harnesses. Those tests SKIP without a database anyway, so a clone is still green.
+sql/
+OtherDbs/
+
+# The loaders exist only to feed the DDL above into a database. A script that sqlplus-es
+# files that are not there is worse than an absent one: it fails deep, in Oracle's voice,
+# and reads as a broken database rather than a deliberate omission.
+Scripts/testdata.sh
+Scripts/testdata2.sh
+Scripts/testdata_other.sh
+Scripts/server_filesystem_setup.sh
+Scripts/server_bfile_setup.sh
+
+# The six-box estate driver. Its header is a tour of OUR hosts, it cannot start without
+# the gitignored Scripts/boxes.env, and it reloads sql/datatypes_23ai_gen.sql before every
+# 23ai run -- a file that no longer ships. Scripts/check_provisioning.sh deliberately STAYS:
+# it queries the database for the objects a config names and never reads sql/, so it keeps
+# working against a contributor's own schema.
+Scripts/estate.sh
+
+# --- the generator configs, and the statement library -------------------------
+# A config ENUMERATES the schema it introspects. generic_test1 alone names 323 procedures and 211
+# tables, and since statements are stored inline their text carries column lists too. So the
+# schema's shape shipped inside the configs while its CREATE statements stayed behind -- which
+# defeats the point of withholding the DDL.
+#
+# WHY ALL OF THEM, and not just the ones connecting as the private user: that was tried and it
+# LEAKED. Keying on the USER a config connects as is too narrow -- the field says who it logs in
+# as, not whose objects it names. Six configs connecting as another schema still carried a dozen
+# of the private schema's object names each, through synonyms and cross-schema references, and
+# only one of the 41 came out genuinely clean.
+#
+# Per-NAME filtering does not work either: the fixtures were cloned between schemas years ago, so
+# the same object names occur in several of them and a name-based check cannot say whose they are.
+# It over-reports, and a check that cannot be trusted gets ignored.
+#
+# NOTE TO WHOEVER EDITS THIS FILE: it SHIPS. Do not illustrate any rule here with a real object
+# name -- that happened four times in one day while writing these very entries, and each time the
+# explanation of an exclusion published a sample of the thing being excluded. Keep examples in
+# the private CLAUDE.md.
+#
+# Stripping the names in place is not an option: a config with no object names generates nothing,
+# so "remove the names" and "do not ship the config" are the same act.
+#
+# What is lost: the worked examples of the config format. The format itself is still documented,
+# and com.mcpdbwizard.schema (Schema, ConfigConverter) round-trips it both ways in code that does
+# ship. What is NOT lost: the generator, the runtime library, and a database-free suite that
+# passes on a fresh clone.
+Propfiles/
+
+# The shared statement library, for the same reason -- its statements are DML and queries against
+# the same schemas, carrying object and column names. Nothing needs it since the 2026-08-15
+# SQL_TEXT_<i> migration moved statement text into the configs.
+Sqlfiles/
+
+# --- the live-database harnesses ---------------------------------------------
+# These drive generated DAOs against the private schemas, so they name their routines and tables
+# outright. Same disclosure as the configs, by another route. (No examples here: this file ships,
+# and that is the third time in one day an explanation of an exclusion nearly published the thing
+# being excluded. The private CLAUDE.md carries the specifics.)
+#
+# They also cannot run here, which is what makes this cost nothing. The generated-tests profile
+# activates on `target/regen/Src`, a tree that only exists after regenerating against those
+# schemas, so in a clone these 78 files never compile and never execute. Shipping them would be
+# dead weight carrying object names.
+#
+# The DATABASE-FREE suite is untouched and is what a fresh clone runs: it needs no fixtures and
+# passes on checkout.
+src/test/generated-harnesses/
+src/test/generated-harnesses-23ai/
+
+# The live-database harnesses that live in the ordinary test tree rather than under
+# generated-harnesses/. Same reason: they name the private schemas' tables and routines, and they
+# cannot run in a clone. Their base class goes with them -- it names the schema too.
+#
+# Listed one by one because there is no directory boundary here: this package also holds
+# database-free tests that DO ship (RenamerTest, the AbstractLocalHarness family). A list can go
+# stale, so check-export-clean.sh --staged also asserts that nothing shipped extends
+# AbstractLiveDbHarness -- the structural property, which a new harness cannot avoid having.
+src/test/java/com/mcpdbwizard/test/AbstractLiveDbHarness.java
+src/test/java/com/mcpdbwizard/test/TIoUtilsBfileCreator.java
+src/test/java/com/mcpdbwizard/test/TQueryResult1.java
+src/test/java/com/mcpdbwizard/test/TQueryResult2.java
+src/test/java/com/mcpdbwizard/test/TQueryResult3.java
+src/test/java/com/mcpdbwizard/test/TQueryResult4.java
+src/test/java/com/mcpdbwizard/test/TQueryResult4byte.java
+src/test/java/com/mcpdbwizard/test/TQueryResult5BFILE.java
+src/test/java/com/mcpdbwizard/test/TQueryResult5BFILEByte.java
+src/test/java/com/mcpdbwizard/test/TQueryResultDateFormat.java
+src/test/java/com/mcpdbwizard/test/TQueryResultFiles.java
+src/test/java/com/mcpdbwizard/test/TQueryResultNumberFormat.java
+src/test/java/com/mcpdbwizard/test/TQueryResultNumberLengths.java
+src/test/java/com/mcpdbwizard/test/TQueryResultRAW.java
+src/test/java/com/mcpdbwizard/test/TQueryResultSetBoolean.java
+src/test/java/com/mcpdbwizard/test/TQueryStatement.java
+src/test/java/com/mcpdbwizard/test/TQueryStatementCache.java
+src/test/java/com/mcpdbwizard/test/TQueryStatementCache2.java
+src/test/java/com/mcpdbwizard/test/TQueryStatementParamErrors.java
+src/test/java/com/mcpdbwizard/test/TQueryStatementParams.java
+src/test/java/com/mcpdbwizard/test/TSqlStatementDictionary.java
+
+# A live-database gate test with its own config, sitting outside Propfiles/ -- which is exactly
+# why excluding that directory did not catch it. The config carries the private schema's username
+# AND its password.
+Scripts/mcpsql-gate-test/
+
+# A list of objects the private configs name that no DDL creates. It is an inventory of that
+# schema by definition, and the configs it describes do not ship either.
+Scripts/provisioning/known-absent.txt
+
+# Superseded by `sql/` and `OtherDbs/` above, which take the whole trees. The distinction it
+# recorded -- one orphaned fixture that could be dropped on its own, versus siblings that
+# provisioning depended on -- stopped mattering once the DDL went wholesale.
+#OtherDbs/Mnet/

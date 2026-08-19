@@ -1,0 +1,662 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      DELIBERATELY HAS NO <parent>. This module is Apache-2.0 (see LICENSE and NOTICE
+      beside this file) while the repository root is all-rights-reserved, and a module
+      that inherits from a POM it may not lawfully copy cannot be built by the people
+      the licence was granted to: Maven resolves the parent before it compiles anything.
+      Declaring the coordinates here costs two elements and makes the grant real, because
+      this directory can then be cloned on its own and built with `mvn package`.
+
+      Nothing else was lost with the parent. It supplied only groupId and version; the
+      two properties it also carried (maven.compiler.release, project.build.sourceEncoding)
+      were already declared below in this file's own <properties>.
+
+      The root pom still lists this directory in its <modules>, which is all the reactor
+      needs, since an aggregator does not require its modules to inherit from it. A build
+      from the repository root therefore behaves exactly as before.
+
+      KEEP THE VERSION IN STEP WITH THE ROOT POM. web/ depends on this artifact at
+      ${project.version}, resolved from ITS parent, so the two are no longer kept equal
+      automatically and a bump to one alone will fail to resolve.
+    -->
+    <groupId>com.mcpdbwizard</groupId>
+    <artifactId>mcpdbwizard-app</artifactId>
+    <version>2.0.0-SNAPSHOT</version>
+    <packaging>jar</packaging>
+
+    <licenses>
+        <license>
+            <name>The Apache License, Version 2.0</name>
+            <url>https://www.apache.org/licenses/LICENSE-2.0.txt</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <name>MCPDBWizard (MCPDBWizard)</name>
+    <description>MCPDBWizard PL/SQL-to-Java code generator.</description>
+
+    <properties>
+        <maven.compiler.release>21</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <main.class>com.mcpdbwizard.app.procbuilder.gui.ProcBuilder</main.class>
+        <junit.version>5.10.2</junit.version>
+        <slf4j.version>2.0.16</slf4j.version>
+        <log4j2.version>2.24.3</log4j2.version>
+    </properties>
+
+    <!--
+      The Oracle JDBC driver is ojdbc11 23.x, which is published on Maven Central
+      (groupId com.oracle.database.jdbc). It supports Oracle Database 12c through
+      23ai and adds the oracle.jdbc.OracleType.JSON/VECTOR/BOOLEAN and
+      oracle.sql.json.* APIs the 23ai datatypes need. (The legacy ojdbc5 11.2.0.4
+      that this project used against Oracle 11 is retained under repo/ for reference
+      but is no longer on the build path; it cannot talk to a 23ai server for the
+      new datatypes.)
+    -->
+
+    <dependencies>
+        <dependency>
+            <groupId>com.oracle.database.jdbc</groupId>
+            <artifactId>ojdbc11</artifactId>
+            <version>23.26.2.0.0</version>
+        </dependency>
+
+        <!--
+          SLF4J API: only needed by com.mcpdbwizard.pub.Slf4jLog, the optional LogInterface
+          backend that routes MCPDBWizard/generated-code logging through SLF4J. Marked optional
+          so it is not forced on downstream consumers that pick a different LogInterface
+          (ConsoleLog, TextLog, JavaLog, ...). Applications that use Slf4jLog must supply
+          slf4j-api plus an SLF4J binding (Logback, Log4j 2, ...) themselves.
+        -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Log4j 2 API: only needed by com.mcpdbwizard.pub.Log4j2Log, the optional LogInterface
+          backend that routes logging through Log4j 2. Only the API (log4j-api) is required;
+          applications that use Log4j2Log supply the Log4j 2 core implementation (log4j-core)
+          and its configuration themselves. Marked optional for the same reason as slf4j-api.
+        -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j2.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          MCP (Model Context Protocol) Java SDK: only needed to COMPILE generator output
+          produced with MCP_SERVER=YES (the emitted <Factory>McpServer class), which the
+          generated-tests profile does when the regen tree contains one. The generator
+          application itself never links against it, so it is optional; applications
+          that run a generated MCP server supply the SDK (and its Jackson 3 / Reactor
+          dependencies, which Maven resolves transitively from this artifact) themselves.
+          Needs Java 17+, which the main build (release 21) satisfies.
+        -->
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp</artifactId>
+            <version>2.0.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Optional: an embedded servlet container (Jetty 12, jakarta.servlet 6) so a generated
+          McpServer can serve the MCP Streamable HTTP transport (the "http" run mode) in addition
+          to the default stdio transport. Only needed by apps that use the HTTP mode;
+          the MCP SDK's server-side HTTP transport is an HttpServlet, which Jetty hosts. Pulled in
+          for the generated-tests profile so the emitted server compiles.
+        -->
+        <dependency>
+            <groupId>org.eclipse.jetty.ee10</groupId>
+            <artifactId>jetty-ee10-servlet</artifactId>
+            <version>12.0.16</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <version>6.1.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Optional: Oracle XML DB (oracle.xdb.XMLType) + its XML parser. Only needed at RUNTIME by a
+          generated McpServer (or any generated wrapper) that handles an XMLTYPE parameter: the
+          wrapper builds an oracle.xdb.XMLType from the bound text (IN) and reads getStringVal() (OUT),
+          and XMLType construction needs the xmlparserv2 parser. Not in ojdbc11 (unlike oracle.sql.CLOB
+          /BLOB). Elsewhere oracle.xdb is only a compile-only shim (Scripts/compile-shims); this
+          supplies the real classes so XMLTYPE round-trips at runtime.
+        -->
+        <dependency>
+            <groupId>com.oracle.database.xml</groupId>
+            <artifactId>xdb</artifactId>
+            <version>23.26.2.0.0</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>com.oracle.database.xml</groupId>
+            <artifactId>xmlparserv2</artifactId>
+            <version>23.26.2.0.0</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Optional: Oracle Spatial (oracle.spatial.geometry.JGeometry). Needed by generated code for
+          any config selecting an SDO_GEOMETRY table column or PL/SQL parameter: the generator emits
+          a JGeometryWrapper plus JGeometry.load()/store() calls in the SOAP ServiceImpl.
+
+          ORACLE PUBLISHES THIS TO MAVEN CENTRAL. Do not assume otherwise: it is easy to conclude
+          the opposite by probing guessed coordinates, because only 23.26 exists, so a check against
+          (say) 19.3.0.0 or 23.5.0.24.07 returns nothing and looks like proof of absence. It is not.
+          List https://repo1.maven.org/maven2/com/oracle/database/spatial/ rather than guessing
+          versions. The 23.26 line matches the ojdbc11 23.26.2.0.0 generation already used here.
+
+          Before this was declared, Scripts/compile-shims held a compile-only JGeometry stub for the
+          regen path while the web Runtime and the container had nothing at all, so a spatial config
+          compiled in the test suite and failed in the product. That shim is now redundant for
+          anything using this dependency's classpath.
+        -->
+        <dependency>
+            <groupId>com.oracle.database.spatial</groupId>
+            <artifactId>sdoapi</artifactId>
+            <version>23.26</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Optional: the javax.jws (JSR-181) web-service annotations. Not used by
+          this module's own code, but generated code for a WEB_SERVICES=YES config
+          emits javax.jws.@WebService/@WebMethod/@WebParam, so the annotations must
+          be on the classpath when that generated code is compiled/run (e.g. by the
+          web module's Runtime). Version 1.1.1 still uses the javax.jws package
+          (2.x+ moved to jakarta.jws). Optional so it is not forced on consumers.
+        -->
+        <dependency>
+            <groupId>jakarta.jws</groupId>
+            <artifactId>jakarta.jws-api</artifactId>
+            <version>1.1.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Apache Commons Pool 2: the pooling engine behind com.mcpdbwizard.pub.DaoFactoryPool, which
+          holds a pool of warm generated DAO factories (connection + cached DAOs + their parsed
+          statements) so concurrent callers of a generated MCP/web-service server stop serializing on
+          one connection. GenericObjectPool supplies exactly the required behaviour - grow to a fixed
+          maximum, block with a timeout when saturated, and evict idle members back down to a floor.
+          Optional because only a DAO_POOL=YES config emits code that touches it; a deployment that
+          does not pool never needs the jar. Apache-2.0, and no transitive dependencies of its own.
+        -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+            <version>2.12.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Nimbus JOSE+JWT: validates the OAuth access tokens an MCP_OAUTH=YES server accepts.
+
+          A deliberate dependency rather than hand-rolled verification. The failure modes of a
+          home-made JWT check are subtle and well catalogued - accepting "alg":"none", algorithm
+          confusion where an HMAC token is verified against a public key, unchecked expiry, key
+          selection that ignores kid - and each one silently turns the control into a no-op. Nimbus
+          supplies a JWKS source with caching plus a processor whose accepted algorithms are declared
+          up front, which is the part worth not writing twice.
+
+          Optional because only an MCP_OAUTH=YES config emits code that touches it. Apache-2.0.
+        -->
+        <dependency>
+            <groupId>com.nimbusds</groupId>
+            <artifactId>nimbus-jose-jwt</artifactId>
+            <version>9.40</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Kafka client: needed only by com.mcpdbwizard.pub.KafkaAuditSink, the reference audit sink.
+          Optional for the same reason as the others - a deployment that audits to a table, to a file
+          or not at all never needs the jar, and one that does can supply its own version.
+        -->
+        <dependency>
+            <groupId>org.apache.kafka</groupId>
+            <artifactId>kafka-clients</artifactId>
+            <version>3.9.1</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          AWS S3: needed only by com.mcpdbwizard.pub.S3AuditSink. Optional like the others, and it
+          is the heaviest of them by a distance - the SDK brings its own HTTP clients and a
+          credentials chain, so a deployment that audits anywhere else never pays for any of it.
+
+          THE SDK RATHER THAN SIGNING REQUESTS BY HAND, deliberately. SigV4 itself is about a
+          hundred lines, and writing it would avoid this dependency entirely. What cannot sensibly
+          be hand-rolled is where the CREDENTIALS come from: this product is distributed as a
+          container to run in AWS, so in practice they arrive from an ECS task role over the
+          container credentials endpoint or from an EKS service account via a web identity token,
+          not from environment variables. Reimplementing that chain is exactly the kind of code
+          that appears to work in testing and fails in the deployment that matters.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>s3</artifactId>
+            <version>2.31.7</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!-- Test-only: JUnit 5 (Jupiter). The aggregator pulls in api + engine + params. -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>mcpdbwizard-app</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.13.0</version>
+            </plugin>
+
+            <!--
+              Write this module's runtime dependency classpath (ojdbc, the MCP
+              SDK + its Jackson 3, Jetty, xdb, ...) to target/mcp-classpath.txt.
+              The web module's Runtime uses it - together with the mcpdbwizard-app
+              jar - to generate/compile/run a generated MCP server on a CLEAN
+              classpath, i.e. without the web app's own Spring Boot / Jackson 2
+              jars, which otherwise clash with the SDK's Jackson 3.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>mcp-classpath</id>
+                        <phase>process-classes</phase>
+                        <goals>
+                            <goal>build-classpath</goal>
+                        </goals>
+                        <configuration>
+                            <outputFile>${project.build.directory}/mcp-classpath.txt</outputFile>
+                            <includeScope>runtime</includeScope>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- Run the JUnit 5 test suite. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.5</version>
+                <configuration>
+                    <!--
+                      In addition to the conventional *Test classes, pick up the migrated
+                      legacy harnesses, which keep their historical "T<Name>" identity
+                      (e.g. TQueryResult1, TRefCursor) rather than a *Test suffix. Helper
+                      classes that share the T prefix but carry no @Test (the TestdirWrangler
+                      fixture and the generated TestSeq* sequence stubs) are excluded.
+                    -->
+                    <includes>
+                        <include>**/Test*.java</include>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*TestCase.java</include>
+                        <include>**/T*.java</include>
+                    </includes>
+                    <excludes>
+                        <exclude>**/TestdirWrangler.java</exclude>
+                        <exclude>**/TestSeq*.java</exclude>
+                    </excludes>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>${main.class}</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+
+            <!-- Build a self-contained, runnable jar that bundles the JDBC driver. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>shaded</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer
+                                        implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>${main.class}</mainClass>
+                                </transformer>
+                            </transformers>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              Javadoc for the com.mcpdbwizard.pub runtime library (the API generated code
+              links against). Scoped to that package only - the generator packages
+              (com.mcpdbwizard.app, .mcpdbwizardconnector, .prod, .util) are intentionally not
+              documented here. Run with: mvn javadoc:javadoc  (output under target/site/apidocs).
+
+              doclint is set to all,-missing: every correctness check (HTML, broken links and
+              references, bad tags) is enforced and the build fails on any error or warning,
+              but the "missing" completeness group (undocumented @param/@return/@throws on this
+              legacy surface) is not flagged. Not bound to a phase, so it does not slow down
+              the normal package build.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-javadoc-plugin</artifactId>
+                <version>3.11.2</version>
+                <configuration>
+                    <sourcepath>${project.basedir}/src/main/java</sourcepath>
+                    <subpackages>com.mcpdbwizard.pub</subpackages>
+                    <doclint>all,-missing</doclint>
+                    <failOnError>true</failOnError>
+                    <failOnWarnings>true</failOnWarnings>
+                    <quiet>true</quiet>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+          The migrated ref-cursor / sequence harnesses (TRefCursor, TRefCursor2,
+          TSequenceFunctionality) link against MCPDBWizard-GENERATED code in the
+          generic_test1.* packages. That code is not checked in (it is generated
+          output, not source); it is produced by Scripts/testrun_current.sh into
+          target/regen/Src and compiled there.
+
+          This profile activates automatically once that generated tree exists. It
+          then folds these extra test-source roots into the build:
+            * target/regen/Src        : the generated code itself
+            * Scripts/compile-shims   : compile-only javax.jws / oracle.xdb /
+                                        oracle.spatial.geometry shims the generated
+                                        code references (see the script header)
+            * JavaLoggingSrc          : com.mcpdbwizard.pub.JavaLog, the optional
+                                        java.util.logging backend (historically the
+                                        separate OBJavaLog.jar) that generated code
+                                        with DAO_LOG_TYPE=Java 1.4 Logging links against
+            * src/test/generated-harnesses : the harnesses that import it
+          When the tree is absent the profile stays off, those harnesses are not
+          compiled, and the rest of the suite still builds and runs without a DB.
+
+          Workflow:  mvn -DskipTests package  &&  Scripts/testrun_current.sh  &&  mvn test
+          (do not 'mvn clean' between the script and the test run, or the generated
+          tree under target/ is wiped and the profile deactivates).
+        -->
+        <profile>
+            <id>generated-tests</id>
+            <activation>
+                <file>
+                    <exists>${basedir}/target/regen/Src</exists>
+                </file>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-generated-test-sources</id>
+                                <phase>generate-test-sources</phase>
+                                <goals>
+                                    <goal>add-test-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <!--
+                                          target/regen/Src is deliberately NOT here. testrun_current.sh
+                                          has already compiled it into target/regen/Built and jarred it
+                                          as target/regen/generated.jar, which the dependency below puts
+                                          on the test classpath. Adding it as a source root meant every
+                                          `mvn test` compiled ~11,700 generated files a SECOND time:
+                                          the largest allocation in a run, and one the OS was SIGKILLing
+                                          on a memory-tight machine (no OutOfMemoryError is printed; the
+                                          log simply stops mid-"Compiling 11712 source files").
+                                          The T* harnesses still compile against the generated classes;
+                                          they link to them rather than rebuilding them.
+                                        -->
+                                        <source>${basedir}/Scripts/compile-shims</source>
+                                        <source>${basedir}/JavaLoggingSrc</source>
+                                        <source>${basedir}/src/test/generated-harnesses</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+            <dependencies>
+                <!--
+                  The generated tree, already compiled by testrun_current.sh. system scope because
+                  this is a build output rather than a published artifact: there is no repository to
+                  resolve it from, and its content changes with every regen. The profile only
+                  activates when target/regen/Src exists, and the script writes the jar in the same
+                  run that creates it, so the path is present whenever this dependency is read.
+                -->
+                <dependency>
+                    <groupId>com.mcpdbwizard</groupId>
+                    <artifactId>regen-generated</artifactId>
+                    <version>0</version>
+                    <scope>system</scope>
+                    <systemPath>${project.build.directory}/regen/generated.jar</systemPath>
+                </dependency>
+            </dependencies>
+        </profile>
+
+        <!--
+          harnesses-23ai : run the generated-harness suite against Oracle 23ai output.
+
+          23ai's data dictionary resolves things 12c left for the generator to parse from
+          source (native BOOLEAN instead of 'PL/SQL BOOLEAN'; subtypes / table %ROWTYPE
+          resolved to their base in ALL_ARGUMENTS), so the generator emits correct but
+          DIFFERENTLY-shaped code (native-boolean accessors, one base record where 12c had
+          several subtype-named classes, different collision-hash class names). The 12c-
+          authored harnesses are hard-coded to the 12c names and cannot compile against 23ai
+          output. This (manually-activated) profile swaps in 23ai-adapted harness variants
+          under src/test/generated-harnesses-23ai (classes suffixed '23ai') and excludes the
+          four 12c-coupled originals from the test compile, leaving the 12c set untouched.
+
+          Use (with a 23ai-generated target/regen/Src):  mvn test -Pharnesses-23ai
+          On 12c, omit the flag: the originals compile and the 23ai dir is not added.
+        -->
+        <profile>
+            <id>harnesses-23ai</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-23ai-harness-sources</id>
+                                <phase>generate-test-sources</phase>
+                                <goals>
+                                    <goal>add-test-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${basedir}/src/test/generated-harnesses-23ai</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <!-- Drop the 12c-coupled originals; the 23ai variants (suffixed
+                                 '23ai', distinct filenames) are not matched by these paths. -->
+                            <testExcludes>
+                                <testExclude>com/mcpdbwizard/test/TFunctionScalerDatatypes.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TSubtypes01.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TRecordTest2SALPubSyn.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TRecordTest3SALPubSyn.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TTablesIndex.java</testExclude>
+                            </testExcludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+          no-gen23ai : auto-active whenever the regen tree lacks a REAL (non-hollow)
+          generic_test_23ai — i.e. the run was generated against a non-23ai box, the
+          23ai propfile was skipped, or its OB_GEN_* fixture objects were absent so
+          only scaffolding was emitted. TGen23ai imports that tree, so it cannot
+          compile then; this drops it instead of requiring the old "stash a
+          FREE23-generated generic_test_23ai and restore it after every regen"
+          ritual. When the tree IS real the profile stays off and TGen23ai compiles
+          and runs as before. (Detection is via a deep marker file, see below.)
+        -->
+        <profile>
+            <id>no-gen23ai</id>
+            <activation>
+                <file>
+                    <!-- Keyed to a file that only exists in a REAL 23ai tree, not to the
+                         generic_test_23ai directory: on a pre-23ai host a no-arg regen
+                         still creates the directory but only scaffolding inside it (the
+                         OB_GEN_* fixture objects cannot exist there), which used to keep
+                         this profile off and break TGen23ai's compile. ObGenDvMgr.java is
+                         also the ONE private object name deliberately left in this repo's
+                         shipping files: it is a real path that must match the generated tree,
+                         so renaming it would break activation and re-open the hollow-tree bug
+                         described here. Everything else was pseudonymised.
+                         the newest class TGen23ai imports, so its presence implies the
+                         current fixture (sql/datatypes_23ai_gen.sql) was generated. -->
+                    <missing>${basedir}/target/regen/Src/generic_test_23ai/yes_comments/yes_stats/yes_debug/yes_om/icl_jnc/ov1210_ov/table/manager/ObGenDvMgr.java</missing>
+                </file>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <testExcludes combine.children="append">
+                                <testExclude>com/mcpdbwizard/test/TGen23ai.java</testExclude>
+                                <!-- Same tree as TGen23ai (plus the MCP server class), so it
+                                     cannot compile against a hollow/non-23ai regen tree. -->
+                                <testExclude>com/mcpdbwizard/test/TGen23aiMcp.java</testExclude>
+                                <!-- Same tree again, and it additionally needs that tree to have
+                                     been generated with DAO_POOL=YES for the pool class to exist. -->
+                                <testExclude>com/mcpdbwizard/test/TGen23aiPool.java</testExclude>
+                            </testExcludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+          harnesses-longids : run the generated-harness suite against output generated
+          from an Oracle 12.2+ LONG-IDENTIFIER database that is NOT 23ai (18c XE, 19c,
+          21c: the 2026-07 XE18/ORCL19/ORCL21 boxes).
+
+          These versions sit between the 12c and 23ai dictionaries. Like 23ai (and unlike
+          12.1) they allow 128-char identifiers, so the >30-char PUBSYN_RECORD_TEST_2_*_SAL_*
+          public synonyms exist verbatim, the generator emits full un-hashed class names
+          (PubsynRecordTest28iRt1 rather than 12c's collision-hashed A3da8c5e...), skips
+          the public-synonym SAL access classes, and resolves the AGENTS-subtype args to
+          one base %ROWTYPE class. So the three name-coupled 12c originals cannot compile
+          and their 23ai variants are the right harnesses. Unlike 23ai, these versions
+          still report 'PL/SQL BOOLEAN' in ALL_ARGUMENTS, so the base
+          TFunctionScalerDatatypes IS correct here and the 23ai native-boolean variant
+          (whose accessors the generated code does not have) must stay out. TGen23ai is
+          excluded because the 23ai-only generic_test_23ai tree/objects (its fixture table)
+          cannot exist on these versions. TTablesIndex: both the base harness and the
+          self-seeding 23ai variant compile here; both are kept for coverage.
+
+          Use (with a regen tree generated from such a box):  mvn test -Pharnesses-longids
+        -->
+        <profile>
+            <id>harnesses-longids</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.codehaus.mojo</groupId>
+                        <artifactId>build-helper-maven-plugin</artifactId>
+                        <version>3.6.0</version>
+                        <executions>
+                            <execution>
+                                <id>add-longids-harness-sources</id>
+                                <phase>generate-test-sources</phase>
+                                <goals>
+                                    <goal>add-test-source</goal>
+                                </goals>
+                                <configuration>
+                                    <sources>
+                                        <source>${basedir}/src/test/generated-harnesses-23ai</source>
+                                    </sources>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-compiler-plugin</artifactId>
+                        <configuration>
+                            <testExcludes>
+                                <!-- 12c-coupled originals whose class names don't exist in
+                                     long-identifier output (their 23ai variants replace them). -->
+                                <testExclude>com/mcpdbwizard/test/TSubtypes01.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TRecordTest2SALPubSyn.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TRecordTest3SALPubSyn.java</testExclude>
+                                <!-- 23ai-only: needs the generic_test_23ai tree / native 23ai types. -->
+                                <testExclude>com/mcpdbwizard/test/TGen23ai.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TGen23aiMcp.java</testExclude>
+                                <testExclude>com/mcpdbwizard/test/TGen23aiPool.java</testExclude>
+                                <!-- 23ai variant that does NOT apply: 18c/19c/21c still report
+                                     'PL/SQL BOOLEAN', so the base TFunctionScalerDatatypes runs. -->
+                                <testExclude>com/mcpdbwizard/test/TFunctionScalerDatatypes23ai.java</testExclude>
+                                <!-- Data-shape coupled to the 12c box's AGENTS rows (same reason it
+                                     is dropped on 23ai); the self-seeding TTablesIndex23ai replaces it. -->
+                                <testExclude>com/mcpdbwizard/test/TTablesIndex.java</testExclude>
+                            </testExcludes>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

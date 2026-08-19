@@ -1,0 +1,86 @@
+# tnsnames.ora.TEMPLATE --
+#
+#   cp tnsnames.ora.template tnsnames.ora   and replace every REPLACE-ME host.
+#
+# tnsnames.ora itself is GITIGNORED: it holds real hostnames and never ships.
+#
+# tnsnames.ora -- TNS aliases for the MCPDBWizard test databases.
+#
+# Point sqlplus at this file with TNS_ADMIN (Scripts/testdata.sh does this for
+# you, defaulting TNS_ADMIN to this directory):
+#
+#     TNS_ADMIN=$(pwd)/Scripts/tns  sqlplus system/manager@ORCL12
+#
+# WHY ALIASES (and not EZConnect): the test-schema DDL embeds its own
+# `connect user/pass@&1` lines AND reuses &1 as the datafile subdirectory name
+# (e.g. /export/data/oradata/&1/appschema.dbf). A short alias works as both a connect
+# identifier and a filesystem-safe directory name; an EZConnect string
+# (host:port/service) cannot be a directory name. So &1 is always one of the
+# alias names below.
+#
+# IMPORTANT: the alias name is also the oradata/testdata subdirectory the server
+# must already have. Run Scripts/server_filesystem_setup.sh ON each DB host with
+# the matching alias as its SID label BEFORE running testdata.sh:
+#
+#     # on REPLACE-ME.your-network :  sudo Scripts/server_filesystem_setup.sh ORCL12
+#     # on REPLACE-ME.your-network :  sudo Scripts/server_filesystem_setup.sh FREE23
+#
+# so that /export/data/oradata/ORCL12 (resp. .../FREE23) exists and is writable.
+
+# Oracle 12c box (12.1.0.2 EE, multitenant: CDB `cdb`, PDB ORCL reached via
+# SERVICE_NAME). Now at REPLACE-ME.your-network (moved 2026-07-13 from REPLACE-ME.your-network, which
+# itself replaced the retired REPLACE-ME.your-network); the server-side /export/data tree on
+# this host is already keyed ORCL12.
+ORCL12 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = orcl))
+  )
+
+# Oracle 26ai Free 23.26.0.0.0 box (the alias FREE23 is historical -- its banner
+# actually reads "26ai Free", same 23ai-line release as FREE26). Pluggable
+# database, so a SERVICE_NAME, not a SID.
+FREE23 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = FREEPDB1))
+  )
+
+# Oracle 26ai Free box (23.26.0.0.0), host kolcheck-26. Second 26ai instance
+# alongside FREE23. Like the 2026-07 boxes it has NO /export/data tree and no SSH
+# access, so testdata.sh maps its datafile dir to the PDB's own oradata dir
+# (/opt/oracle/oradata/FREE/FREEPDB1) and uses the no-SSH BFILE fixup path.
+FREE26 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = FREEPDB1))
+  )
+
+# --- 2026-07 additions. These three boxes have NO /export/data tree and no SSH
+# --- access; testdata.sh maps their datafile directory to the PDB's own oradata
+# --- dir (see the DATA_DIR case table there) instead of /export/data/oradata/<ALIAS>.
+
+# Oracle 18c Express Edition box. The CDB service is XE; usable PDB is XEPDB1.
+# Moved to REPLACE-ME.your-network on 2026-07-14 (was REPLACE-ME.your-network).
+XE18 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = XEPDB1))
+  )
+
+# Oracle 19c EE box (CDB ORCLCDB). ORCLPDB1 exists but is left MOUNTED; MYPDB is
+# the PDB that is open and listener-registered, so the test schemas live there.
+ORCL19 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = mypdb))
+  )
+
+# Oracle 21c EE box (CDB ORCLCDB). ORCLPDB1 is left MOUNTED; like the 19c box,
+# the open PDB is `mypdb` (created/opened by the DBA 2026-07-05), so the test
+# schemas live there.
+ORCL21 =
+  (DESCRIPTION =
+    (ADDRESS = (PROTOCOL = TCP)(HOST = REPLACE-ME.your-network)(PORT = 1521))
+    (CONNECT_DATA = (SERVICE_NAME = mypdb))
+  )

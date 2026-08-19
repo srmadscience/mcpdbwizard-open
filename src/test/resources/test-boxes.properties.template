@@ -1,0 +1,21 @@
+# Local Oracle test-box inventory for the gated live tests.
+#
+#   cp test-boxes.properties.template test-boxes.properties   and fill in your own values.
+#
+# test-boxes.properties is GITIGNORED. Nothing here ships with the repository, and a clone
+# without it simply skips every live test (the availability probe fails, JUnit Assumptions
+# skip rather than fail). Per key the resolution order is:
+#
+#   -Dorinda.test.<key>   ->   ORINDA_TEST_<KEY>   ->   this file
+#
+# so an environment variable always wins, which is how the multi-box runs select a server.
+#
+# SID takes a leading '/' to mean SERVICE_NAME rather than SID -- the same convention
+# ConnectionWrangler and Scripts/testrun_current.sh use.
+
+orinda.test.url      = jdbc:oracle:thin:@your-host:1521/YOURPDB
+orinda.test.host     = your-host
+orinda.test.port     = 1521
+orinda.test.sid      = /YOURPDB
+orinda.test.user     = your_user
+orinda.test.password = your_password

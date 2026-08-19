@@ -1,0 +1,34 @@
+# --- build output ---
+target/
+out/
+*.class
+dependency-reduced-pom.xml
+
+# --- jars are never committed (Oracle's driver is not redistributable) ---
+*.jar
+*.war
+*.ear
+lib/*.jar
+repo/
+
+# --- local machine / editor ---
+.DS_Store
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+hs_err_pid*
+replay_pid*
+
+# --- your own connection details: these are the files CONTRIBUTING tells you to create ---
+src/test/resources/test-boxes.properties
+Scripts/tns/tnsnames.ora
+Scripts/boxes.env
+
+# --- Oracle client noise ---
+*.log
+*.lst
+afiedt.buf
+sqlnet.log
+*.trc

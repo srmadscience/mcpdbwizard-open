@@ -1,0 +1,54 @@
+# Patterns that must NEVER appear in the open-source export.
+#
+# One extended-regex per line; '#' comments and blank lines ignored. Matched against
+# the staged tree by Scripts/export/check-export-clean.sh, which FAILS the export on
+# any hit rather than rewriting the file. That direction matters: a scrubber that
+# silently edits on the way out means a miss becomes a publication you cannot retract,
+# and it lets the working repo stay dirty forever. A gate forces the fix upstream,
+# where it is permanent.
+#
+# When a hit is legitimate (a doc example, a placeholder), fix the file -- do not
+# loosen a pattern here.
+
+# --- private network addresses (RFC1918) ------------------------------------
+10\.13\.1\.[0-9]{1,3}
+192\.168\.[0-9]{1,3}\.[0-9]{1,3}
+172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}
+
+# --- credentials PAIRED WITH A HOST -----------------------------------------
+# The risk is a working user/password NEXT TO a reachable address, so that is what
+# these match: a credential inside a JDBC URL or an @host connect string.
+#
+# A bare `user/password@ALIAS` is deliberately NOT matched. The alias means nothing
+# without Scripts/tns/tnsnames.ora, which is gitignored and never ships. This is a
+# narrowing to match the real risk, NOT a loosening to make the gate pass: a
+# credential beside an IP or a host:port still fails.
+#
+# (The original note here justified the narrowing partly on the grounds that the test
+# schemas' passwords were published anyway in the DDL. That is no longer true -- the DDL
+# does not ship -- and the note named a schema while doing it, in a file that ships.)
+[A-Za-z_][A-Za-z0-9_]*/[A-Za-z0-9_]+@[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}
+[A-Za-z_][A-Za-z0-9_]*/[A-Za-z0-9_]+@[A-Za-z0-9.-]+:[0-9]{4,5}
+
+# `connect system/manager@&1` in the sql/ DDL is deliberately NOT matched, for the same
+# reason: &1 is a TNS ALIAS, resolved only through the gitignored tnsnames.ora, so the
+# pair names no reachable machine. It is also Oracle's historic default SYSTEM password,
+# so it discloses nothing an attacker would not try first. `system/<password>@host:port`
+# still fails, via the pattern above.
+
+# --- the generator access code ----------------------------------------------
+# Appears in the test scripts; it is a licence key shape, not a password, but it has
+# no business in a public repository.
+P6uxbe05oOXiFH4GW4PfY5iU
+
+# --- host names of the standing boxes ---------------------------------------
+kolcheck-2[0-9]
+
+# --- the private test schema, by name ----------------------------------------
+# It does not ship in any form: not its DDL, not the configs that introspect it, not the
+# harnesses that drive it, and not its NAME in a comment or a javadoc example. Written as a
+# character class because the gate matches with grep -E and the name appears in both cases.
+#
+# This is what makes "is the export free of it?" a question the gate answers rather than one
+# somebody has to re-audit by hand. If this pattern fires, do not weaken it -- fix the file.
+[Dd][Bb][Hh][Ee][Ll][Ll]
