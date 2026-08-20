@@ -16,7 +16,7 @@
 # 18c/19c/21c/23ai truncate it and go through the ALL_PLSQL_* synthesis arms, so 12c
 # produces MORE:
 #
-#   generic_test1  2487 on ORCL12  vs  2457 elsewhere
+#   generic_test1  2486 on ORCL12  vs  2456 elsewhere   (measured six-box, 2026-08-20)
 #
 # 2026-08-11, per-propfile SQL directories (docs/missing-sql-file-plan.md): four floors rose
 # because four configs finally get a statement class they had always asked for and silently

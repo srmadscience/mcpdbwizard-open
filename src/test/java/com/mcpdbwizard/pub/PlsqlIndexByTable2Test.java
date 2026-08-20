@@ -215,4 +215,66 @@ class PlsqlIndexByTable2Test {
         t.setArray(new Object[]{"x", "y", "z"});
         assertEquals(3, t.getArrayLength());
     }
+
+    /**
+     * {@code ensureFractionalSeconds} exists so that a zoned conversion mask -- which carries
+     * {@code TZR} and therefore stops tolerating a missing fraction -- keeps accepting the strings
+     * callers already send. These cases are the compatibility contract, not decoration: each one is
+     * a shape someone can legitimately pass to a {@code TIMESTAMP WITH TIME ZONE} index-by table.
+     */
+    @Test
+    void ensureFractionalSecondsAddsAFractionOnlyWhereOneIsMissing() {
+        PlsqlIndexByTable2 t = new PlsqlIndexByTable2(OracleTypes.VARCHAR, 9);
+
+        t.setArray(new Object[]{
+                "2019-03-01 14:25:36",                      // 0: bare -- the case that used to break
+                "2019-03-01 14:25:36 +05:30",               // 1: zone must stay AFTER the fraction
+                "2019-03-01 14:25:36 Asia/Calcutta",        // 2: region name, same
+                "2019-03-01 14:25:36.123",                  // 3: already has one, leave alone
+                "2019-03-01 14:25:36.123 +05:30",           // 4: ditto, with a zone
+                null                                        // 5: nulls survive as nulls
+        });
+
+        t.ensureFractionalSeconds();
+        String[] out = t.getArrayAsString();
+
+        assertEquals("2019-03-01 14:25:36.0", out[0]);
+        assertEquals("2019-03-01 14:25:36.0 +05:30", out[1]);
+        assertEquals("2019-03-01 14:25:36.0 Asia/Calcutta", out[2]);
+        assertEquals("2019-03-01 14:25:36.123", out[3]);
+        assertEquals("2019-03-01 14:25:36.123 +05:30", out[4]);
+        assertNull(out[5]);
+    }
+
+    /**
+     * The other half of the contract, and the more important one: it must not "helpfully" rewrite
+     * something it does not understand. A malformed value has to reach Oracle and be refused there,
+     * with Oracle's message, rather than be quietly turned into something that parses into the
+     * wrong instant.
+     */
+    @Test
+    void ensureFractionalSecondsLeavesAnythingItDoesNotUnderstandAlone() {
+        PlsqlIndexByTable2 t = new PlsqlIndexByTable2(OracleTypes.VARCHAR, 9);
+
+        t.setArray(new Object[]{"", "no-spaces-at-all", "2019-03-01", "not a timestamp either"});
+        t.ensureFractionalSeconds();
+        String[] out = t.getArrayAsString();
+
+        assertEquals("", out[0]);
+        assertEquals("no-spaces-at-all", out[1]);
+        assertEquals("2019-03-01", out[2]);
+        // Three tokens, and the middle one is not a time -- but it has no '.', so a naive
+        // implementation would append one. It must not.
+        assertEquals("not a timestamp either", out[3]);
+    }
+
+    /** A numeric table holds BigDecimals, which this must skip rather than class-cast on. */
+    @Test
+    void ensureFractionalSecondsIgnoresNonStringElements() throws CSNumberFormatException {
+        PlsqlIndexByTable2 t = new PlsqlIndexByTable2(OracleTypes.NUMBER, 0);
+        t.setArray(new Object[]{new BigDecimal("1.5"), null});
+
+        assertDoesNotThrow(t::ensureFractionalSeconds);
+        assertEquals(new BigDecimal("1.5"), t.getArrayAsBigDecimal()[0]);
+    }
 }

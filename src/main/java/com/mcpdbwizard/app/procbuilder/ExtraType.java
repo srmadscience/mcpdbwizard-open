@@ -256,12 +256,19 @@ public class ExtraType {
             createStatement.clear();
             createStatement.add("");
 
-            if (newPlsql.typeImplementingClass.dataType.indexOf("TIMESTAMP") > -1) {
+            // The element type has to be spelled the way CREATE TYPE accepts, not the way the
+            // dictionary reported it -- a collection element read from the PL/SQL type views comes
+            // back as 'TIMESTAMP WITH TZ', and 'TABLE OF TIMESTAMP(9) WITH TZ' is a syntax error.
+            // Oracle does not reject it at generation time, only when the emitted DDL is run, so
+            // without this the failure surfaces as a missing type at bind time.
+            String theElementType = JavaUtils.oracleSqlTypeName(newPlsql.typeImplementingClass.dataType);
+
+            if (theElementType.indexOf("TIMESTAMP") > -1) {
                 createArrayStatement = "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_A  AS TABLE OF "
-                        + JavaUtils.replaceString(newPlsql.typeImplementingClass.dataType, "TIMESTAMP", "TIMESTAMP" + sizeDef)
+                        + JavaUtils.replaceString(theElementType, "TIMESTAMP", "TIMESTAMP" + sizeDef)
                         + ";";
             } else {
-                createArrayStatement = "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_A  AS TABLE OF " + newPlsql.typeImplementingClass.dataType + sizeDef + ";";
+                createArrayStatement = "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_A  AS TABLE OF " + theElementType + sizeDef + ";";
             }
         } else {
             createStatement.set(0, "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_T AS OBJECT");

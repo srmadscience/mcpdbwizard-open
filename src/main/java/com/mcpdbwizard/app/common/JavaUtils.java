@@ -853,13 +853,23 @@ public class JavaUtils {
         {
             returnCode = "S";
         }
+        // These letters are the discriminator in the generated shadow type's NAME -- Q, H and T
+        // are what make OSOFTBQ_A, OSOFTBH_A and OSOFTBT_A three different types. So a spelling
+        // that misses the Q and H arms does not merely mislabel something: the zoned collection
+        // is handed the UNZONED type's name and dedupes into it. On a server whose PL/SQL type
+        // views say 'TIMESTAMP WITH TZ' that is exactly what happened -- one TABLE OF TIMESTAMP(9)
+        // standing in for all three, with no error anywhere, because a name collision looks like
+        // reuse. See SqlUtils.getUnderlyingOracleDatatype, which had the same gap for the same
+        // reason and must be kept in step with this.
         else if (theColumnDataType.equals("TIMESTAMP WITH LOCAL TIME ZONE") // Datatype according to ALL_SOURCE
                 || theColumnDataType.equals("TIMESTAMPLTZ") // Datatype according to ResultSet
+                || theColumnDataType.equals("TIMESTAMP WITH LOCAL TZ") // ALL_PLSQL_COLL_TYPES / _TYPE_ATTRS
                 || (theColumnDataType.startsWith("TIMESTAMP") // Allow for "TIMESTAMP(6) WITH LOCAL TIME ZONE"
                 && theColumnDataType.endsWith("LOCAL TIME ZONE"))) {
             returnCode = "Q";
         } else if (theColumnDataType.equals("TIMESTAMP WITH TIME ZONE")  // Datatype according to ALL_SOURCE
                 || theColumnDataType.equals("TIMESTAMPTZ")   // Datatype according to ResultSet
+                || theColumnDataType.equals("TIMESTAMP WITH TZ") // ALL_PLSQL_COLL_TYPES / _TYPE_ATTRS
                 || (theColumnDataType.startsWith("TIMESTAMP") // Allow for "TIMESTAMP(6) WITH LOCAL TIME ZONE"
                 && theColumnDataType.endsWith("TIME ZONE"))) {
             returnCode = "H";
@@ -878,6 +888,48 @@ public class JavaUtils {
     /**
      *
      */
+    /**
+     * Turn a data type as the PL/SQL type VIEWS spell it into the spelling SQL DDL accepts.
+     *
+     * <p>{@code ALL_PLSQL_COLL_TYPES} and {@code ALL_PLSQL_TYPE_ATTRS} abbreviate a zoned timestamp
+     * to {@code TIMESTAMP WITH TZ} / {@code TIMESTAMP WITH LOCAL TZ}. Those are not type names
+     * Oracle will accept back: {@code CREATE TYPE x AS TABLE OF TIMESTAMP(9) WITH TZ} is a syntax
+     * error. {@code ALL_ARGUMENTS} spells the same types out in full, which is why this only bites
+     * where a shadow type is built from a collection element rather than from an argument row.
+     *
+     * <p><strong>This normalises ONLY at the point DDL text is written, and that distinction is the
+     * whole reason it is safe.</strong> An earlier attempt at this defect normalised the element
+     * name inside the dictionary QUERY instead, and lost four generated wrappers: other code
+     * matches on the abbreviated spelling deliberately, so rewriting the value at source breaks
+     * those matches. Rewriting it here changes one string on its way into a {@code CREATE TYPE}
+     * statement and nothing else can see it.
+     *
+     * <p>Record ATTRIBUTES do not need this -- {@code SqlStatementDictionary}'s
+     * {@code plsqlAttrDataTypeDecode} already maps them back to the full spelling before they get
+     * here, verified by generating against a server whose views use the abbreviated form and
+     * finding no abbreviated spelling in any emitted {@code _T} declaration. Collection ELEMENTS
+     * are the arm that has no such decode, by design.
+     *
+     * @param theDataType the type name as the dictionary reported it
+     * @return the same name, spelled the way {@code CREATE TYPE} will accept
+     * @since 2.0.0
+     */
+    public static String oracleSqlTypeName(String theDataType) {
+        if (theDataType == null) {
+            return (theDataType);
+        }
+
+        if (theDataType.equalsIgnoreCase("TIMESTAMP WITH TZ")) {
+            return ("TIMESTAMP WITH TIME ZONE");
+        }
+
+        if (theDataType.equalsIgnoreCase("TIMESTAMP WITH LOCAL TZ")) {
+            return ("TIMESTAMP WITH LOCAL TIME ZONE");
+        }
+
+        return (theDataType);
+    }
+
     public static String mapOracleDatatypeToAlphaChar(String theColumnDataType, int length) {
 
         String returnCode = (String) mapOracleDatatypeToAlphaCharOrLength(theColumnDataType, length, false);

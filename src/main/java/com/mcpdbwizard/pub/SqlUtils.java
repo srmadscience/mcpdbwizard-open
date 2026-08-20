@@ -784,13 +784,24 @@ public class SqlUtils {
         {
             returnCode = ORACLE_INTERVAL_DAY_TO_SECOND_DATATYPE;
         }
+        // THE ABBREVIATED SPELLINGS ARE NOT A 23ai CURIOSITY -- THEY ARE WHAT EVERY VERSION USES
+        // HERE. The PL/SQL type views (ALL_PLSQL_COLL_TYPES, ALL_PLSQL_TYPE_ATTRS) write a zoned
+        // timestamp as 'TIMESTAMP WITH TZ' / 'TIMESTAMP WITH LOCAL TZ', where ALL_ARGUMENTS writes
+        // it out in full. Both of those start with TIMESTAMP and neither ends with TIME ZONE, so
+        // before this they fell through to the plain-TIMESTAMP arm below and a zoned collection
+        // element was classified as unzoned -- silently, since every consumer then agreed with
+        // every other. Measured on a 12c server as well as a 23ai one: the collection-element path
+        // reads the abbreviated form on BOTH, so this is not version-conditional and must not be
+        // written as though it were.
         else if (theColumnDataType.equals("TIMESTAMP WITH LOCAL TIME ZONE") // Datatype according to ALL_SOURCE
                 || theColumnDataType.equals("TIMESTAMPLTZ") // Datatype according to ResultSet
+                || theColumnDataType.equals("TIMESTAMP WITH LOCAL TZ") // ALL_PLSQL_COLL_TYPES / _TYPE_ATTRS
                 || (theColumnDataType.startsWith("TIMESTAMP") // Allow for "TIMESTAMP(6) WITH LOCAL TIME ZONE"
                 && theColumnDataType.endsWith("LOCAL TIME ZONE"))) {
             returnCode = ORACLE_TIMESTAMPLTZ_DATATYPE;
         } else if (theColumnDataType.equals("TIMESTAMP WITH TIME ZONE")  // Datatype according to ALL_SOURCE
                 || theColumnDataType.equals("TIMESTAMPTZ")   // Datatype according to ResultSet
+                || theColumnDataType.equals("TIMESTAMP WITH TZ") // ALL_PLSQL_COLL_TYPES / _TYPE_ATTRS
                 || (theColumnDataType.startsWith("TIMESTAMP") // Allow for "TIMESTAMP(6) WITH LOCAL TIME ZONE"
                 && theColumnDataType.endsWith("TIME ZONE"))) {
             returnCode = ORACLE_TIMESTAMPTZ_DATATYPE;

@@ -1051,6 +1051,33 @@ public class CallableStatementParameterEngine {
                             //variableWSDataType[i] = "java.math.BigDecimal[]";
                             variableWSDataType[i] = "java.sql.Timestamp[]";
                             theFlags.setFlag(GlobalFlags.HAS_TIMESTAMP_INDEXBY_ARRAY);
+                        } else if (dataType == SqlUtils.ORACLE_TIMESTAMPTZ_DATATYPE
+                                || dataType == SqlUtils.ORACLE_TIMESTAMPLTZ_DATATYPE) {
+                            // A ZONED timestamp element. Before this arm existed the abbreviated
+                            // dictionary spelling classified as plain TIMESTAMP and landed in the
+                            // arm above, which marshals through a mask carrying no zone -- so the
+                            // zone could neither be sent nor returned, on every Oracle version.
+                            //
+                            // It crosses as TEXT, not java.sql.Timestamp: that class has no zone to
+                            // put one in, which is the whole reason the TIMESTAMP arm above cannot
+                            // serve here. Text is also what lets the WEB SERVICE surface carry a
+                            // zone -- the String[] helpers already exist, so this needs no new
+                            // generated conversion code, and a zone crosses SOAP the same way a
+                            // duality-view document does.
+                            plsqlIndexByDataType[i] = (dataType == SqlUtils.ORACLE_TIMESTAMPTZ_DATATYPE)
+                                    ? OracleTypes.TIMESTAMPTZ
+                                    : OracleTypes.TIMESTAMPLTZ;
+                            plsqlIndexByRealDataType[i] = oracle.jdbc.OracleTypes.VARCHAR;
+                            // Wide enough for the longest region name, not just an offset:
+                            // 'yyyy-mm-dd hh24:mi:ss.ff9' is 29 characters and the longest zone
+                            // name in Oracle's own list ('America/Argentina/ComodRivadavia') is 32,
+                            // so 62 is the true maximum and 80 leaves room. The 28 the unzoned arm
+                            // uses truncates a region name silently -- the shuttle VARCHAR2 is
+                            // sized from this number too.
+                            plsqlIndexByDataLength[i] = 80;
+                            plsqlIndexByDataDecPlaces[i] = 9;
+                            variableWSDataType[i] = "String[]";
+                            theFlags.setFlag(GlobalFlags.HAS_STRING_INDEXBY_ARRAY);
                         } else if (dataType == SqlUtils.ORACLE_NUMBER_DATATYPE) {
                             plsqlIndexByDataType[i] = OracleTypes.NUMBER;
                             plsqlIndexByRealDataType[i] = oracle.jdbc.OracleTypes.VARCHAR;
@@ -4754,6 +4781,10 @@ public class CallableStatementParameterEngine {
                                 theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.DATE);");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMP) {
                                 theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMP);");
+                            } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPTZ) {
+                                theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMPTZ);");
+                            } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPLTZ) {
+                                theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMPLTZ);");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.RAW) {
                                 theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.RAW);");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.NUMBER) {
@@ -4767,6 +4798,19 @@ public class CallableStatementParameterEngine {
                             }
 
                             theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setElementMaxLength(" + plsqlIndexByDataLength[i] + ");");
+
+                            // A zoned element is converted by a mask carrying TZR, and Oracle stops
+                            // tolerating a missing fractional-seconds part once the mask names a
+                            // zone -- '2019-03-01 14:25:36' raises ORA-01843 under it while the
+                            // unzoned mask accepts it. Normalising here, in the generated source
+                            // where it is visible, keeps every string that worked before working,
+                            // without weakening the mask and losing region names. Emitted ONLY for
+                            // the zoned types: nothing else needs it and a blanket call would be
+                            // touching values it has no business touching.
+                            if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPTZ
+                                    || plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPLTZ) {
+                                theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".ensureFractionalSeconds();");
+                            }
 
                             theJavaChunk.print(isBrokenString + paramObjectName + ".setPlSqlIndexArrayParam(" + (paramInId[i] + inOffSet) + ","
                                     + qualifiedParentVariableName + variableName[i] + ");");
@@ -4890,6 +4934,13 @@ public class CallableStatementParameterEngine {
                                         theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.DATE);");
                                     } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMP) {
                                         theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMP);");
+                                    } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPTZ) {
+                                        theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMPTZ);");
+                                    } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPLTZ) {
+                                        // No ensureFractionalSeconds() here, deliberately: this is
+                                        // the pure-OUT arm, so there is no caller-supplied value to
+                                        // normalise. An IN OUT parameter takes the IN path above.
+                                        theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(oracle.jdbc.OracleTypes.TIMESTAMPLTZ);");
                                     } else if (plsqlIndexByDataType[i] == OracleTypes.NUMBER) {
                                         if (targetVersion.startsWith("DB2")) {
                                             theJavaChunk.print(isBrokenString + qualifiedParentVariableName + variableName[i] + ".setDataType(Types.NUMERIC);");
@@ -7290,6 +7341,14 @@ public class CallableStatementParameterEngine {
                                 plsqlText.add(" " + argName + "(i) := TO_DATE(" + plsqlIndexByPlaceHolderVarName[i] + "(i),'" + PlsqlIndexByTable2.ORACLE_DATE_TO_CHAR_MASK + "');");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMP) {
                                 plsqlText.add(" " + argName + "(i) := TO_TIMESTAMP(" + plsqlIndexByPlaceHolderVarName[i] + "(i),'" + PlsqlIndexByTable2.ORACLE_TIMESTAMP_TO_CHAR_MASK + "');");
+                            } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPTZ
+                                    || plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPLTZ) {
+                                // TO_TIMESTAMP_TZ, not TO_TIMESTAMP: the unzoned function discards
+                                // whatever zone the text carries and hands PL/SQL a value that then
+                                // silently acquires the SESSION's zone. Assigning the result to a
+                                // LOCAL variable converts it to the session zone, which is the
+                                // correct meaning of LTZ, so both share this one line.
+                                plsqlText.add(" " + argName + "(i) := TO_TIMESTAMP_TZ(" + plsqlIndexByPlaceHolderVarName[i] + "(i),'" + PlsqlIndexByTable2.ORACLE_TIMESTAMPTZ_TO_CHAR_MASK + "');");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.NUMBER) {
                                 plsqlText.add(" " + argName + "(i) := TO_NUMBER(" + plsqlIndexByPlaceHolderVarName[i] + "(i));");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.RAW) {
@@ -7566,6 +7625,16 @@ public class CallableStatementParameterEngine {
                             }
                             if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMP) {
                                 plsqlText.add(" IF " + argName + ".exists(i) THEN " + plsqlIndexByPlaceHolderVarName[i] + "(i) := TO_CHAR(" + argName + "(i),'" + PlsqlIndexByTable2.ORACLE_TIMESTAMP_TO_CHAR_MASK + "'); END IF;");
+                            } else if (plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPTZ
+                                    || plsqlIndexByDataType[i] == OracleTypes.TIMESTAMPLTZ) {
+                                // The same mask both ways, LOCAL included. A LOCAL timestamp keeps
+                                // no zone of its own -- it is held in the session's -- so TZR here
+                                // renders the SESSION zone rather than the caller's. That is worth
+                                // emitting rather than omitting: the wall clock alone does not say
+                                // which zone it is a wall clock in, and a reader who gets 'GMT'
+                                // back knows. Verified on 12c and 23ai that TO_CHAR accepts TZR for
+                                // both types; it does not error on LOCAL.
+                                plsqlText.add(" IF " + argName + ".exists(i) THEN " + plsqlIndexByPlaceHolderVarName[i] + "(i) := TO_CHAR(" + argName + "(i),'" + PlsqlIndexByTable2.ORACLE_TIMESTAMPTZ_TO_CHAR_MASK + "'); END IF;");
                             } else if (plsqlIndexByDataType[i] == OracleTypes.NUMBER) {
                                 int actualPlaces = plsqlIndexByDataDecPlaces[i];
                                 int actualLength = plsqlIndexByDataLength[i] - actualPlaces;
@@ -10130,6 +10199,14 @@ public class CallableStatementParameterEngine {
                                 } else if (variableWSDataType[i].equals("float[]")) {
                                     extraFrontBit = "createIndexByTableFromBigDecimalArray(createBigDecimalArrayFromFloatArray(";
                                     extraBackBit = ")," + dType + "," + plsqlIndexByDataDecPlaces[i] + ")";
+                                } else if (variableWSDataType[i].equals("String[]")) {
+                                    // A ZONED timestamp element. It reaches this branch rather than
+                                    // the plsqlIndexByDataType == VARCHAR one above because its type
+                                    // code is TIMESTAMPTZ/LTZ, but it crosses the service boundary as
+                                    // TEXT -- which is what carries the zone, and what lets the
+                                    // existing String helpers serve it with no new generated code.
+                                    extraFrontBit = "createIndexByTableFromStringArray(";
+                                    extraBackBit = ")";
                                 } else if (variableWSDataType[i].equals("java.sql.Timestamp[]")) {
                                     extraFrontBit = "createIndexByTableFromTimestampArray(";
                                     extraBackBit = "," + plsqlIndexByDataDecPlaces[i] + ")";
@@ -10687,6 +10764,11 @@ public class CallableStatementParameterEngine {
                                             assignBit = "createDoubleArrayFromBigDecimalArray(createBigDecimalArrayFromIndexByTable(theService." + getMethod + "()))";
                                         } else if (variableWSDataType[i].equals("float[]")) {
                                             assignBit = "createFloatArrayFromBigDecimalArray(createBigDecimalArrayFromIndexByTable(theService." + getMethod + "()))";
+                                        } else if (variableWSDataType[i].equals("String[]")) {
+                                            // The zoned-element counterpart of the IN branch above:
+                                            // the zone comes back as text because java.sql.Timestamp
+                                            // has nowhere to put one.
+                                            assignBit = "createStringArrayFromIndexByTable(theService." + getMethod + "())";
                                         } else if (variableWSDataType[i].equals("java.sql.Timestamp[]")) {
                                             assignBit = "createTimestampArrayFromIndexByTable(theService." + getMethod + "())";
                                         } else if (variableWSDataType[i].equals("byte[][]")) {

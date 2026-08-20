@@ -147,6 +147,37 @@ regression signal.**
 4. **Check the FILE COUNT as well as `extraObjects.sql`.** Checking the DDL alone is what made the
    reverted attempt look like a success.
 
+## Progress
+
+Phases 0-4 are **DONE** (2026-08-20); Phase 5 is the estate verification and is what remains.
+
+| | | |
+|---|---|---|
+| 0 | red test | `src/test/generated-harnesses/.../TTzIndexBy.java` — observed failing on both lines first |
+| 1 | classifier | `SqlUtils.getUnderlyingOracleDatatype` + `JavaUtils.mapOracleDatatypeToAlphaCharOrLength` |
+| 2 | element ladder | TZ/LTZ arms in `CallableStatementParameterEngine`, width 28 → 80 |
+| 3 | masks | `TO_TIMESTAMP_TZ` / `TO_CHAR` with `TZR`, both directions; `setDataType` arms |
+| 3b | shadow-type DDL | `JavaUtils.oracleSqlTypeName`, used by `ExtraType` |
+| 4 | runtime library | `ORACLE_TIMESTAMPTZ_TO_CHAR_MASK`, `ensureFractionalSeconds()`, 3 unit tests |
+| 5 | SOAP | `String[]` surface — two dispatch arms, no new emitted code |
+
+**Measured after the fix, generating `generic_testd` against a 12c and a 23ai-line server:**
+
+- the emitted wrapper is **identical on both**;
+- `extraObjects.sql` is **identical on both**, with three distinct timestamp collection types;
+- file counts **unmoved** (120 / 118 raw), which is where the reverted attempt failed;
+- all six live round-trip cases pass on both lines — offset, region name, zone-less with and
+  without a fraction, and LTZ instants.
+
+**Two things this turned up that were not in the plan.** (1) Fixing the classifier alone made the
+emitted DDL read `TABLE OF TIMESTAMP(9) WITH TZ` — the abbreviated spelling reaching a `CREATE
+TYPE`, which is a **syntax error Oracle only raises when the DDL is run**, so it would have
+surfaced as a missing type at bind time. Hence Phase 3b, and hence the rule that the normalisation
+belongs at the point DDL text is written and nowhere earlier. (2) The `ensureFractionalSeconds`
+guard needed a shape check: without one, the second token of any three-token string gets a `.0`,
+so a malformed value would reach Oracle altered and be refused with a message describing text the
+caller never wrote.
+
 ## Phases
 
 **Phase 0 — make it a red test, on all six boxes.**
@@ -210,26 +241,61 @@ engine's shared emission ladders, so byte-identity with earlier trees will break
 config that has a date or timestamp index-by, and that must be inspected rather than assumed
 benign.
 
+**Residual — MCP still refuses a TZ index-by, and that refusal is now unnecessary.**
+`mcpCollectionElementKind` returns null for a zoned element, so `mcpProcUnsupportedReason` skips the
+routine — the same before this fix and after it, so nothing regressed and no MCP surface moved. But
+the reason for the refusal has gone: it was that `PlsqlIndexByTable2` "has no third representation"
+and would silently stringify, which is exactly what the TZR mask now stops being lossy. Exposing it
+means a `string` element kind plus a type code in `mcpIndexByTypeCode`; deliberately **not** done
+here, because widening an agent-facing surface is its own decision and belongs in its own change.
+
 **Phase 6 — the sibling shapes, as a separate call.**
 `DATE` index-by has the same shape and the same `TO_DATE`/`TO_CHAR` treatment; it loses nothing
 today because a `DATE` has no zone, so it is genuinely fine. **A bare `TIMESTAMP` index-by is
 fine too.** What is *not* obviously fine is `INTERVAL`, which has no arm at all and hits the
 `else`. Decide whether that is in scope.
 
-## Decisions wanted before starting
+## Decisions — TAKEN 2026-08-20, with what they were taken on
 
-1. **Is an unreachable time zone acceptable until fixed?** It is not a wrong answer *returned* —
-   the offset form raises `ORA-01830` loudly. The silent case is the zone-less one, where the
-   session zone is assumed. If that is unacceptable now, the cheap interim is to make
-   `mcpProcUnsupportedReason`'s existing refusal apply to the **DAO** layer as well, so a TZ
-   index-by refuses to generate rather than generating something that cannot express a zone.
-   That trades four generated files for honesty and moves the floors.
-2. **Does `JavaUtils`' copy of the ladder move with `SqlUtils`' (Phase 1)?**
-3. **What should an LTZ render as (Phase 3)?**
-4. **Does any deployment rely on the current zone-less string behaviour?** Anything feeding
-   `yyyy-mm-dd hh24:mi:ss.ff` strings works today and must keep working; the new mask must still
-   accept a zone-less input. **`TZR` on `TO_TIMESTAMP_TZ` with no zone in the value has not been
-   measured — check it before assuming backward compatibility.**
+**1. Which conversion mask.** *Decision: `TZR`, plus client-side normalisation.* No single mask
+covers every input shape, which is the fact the decision turns on. Measured identically on 12c and
+23ai:
+
+| mask | `+05:30` | `Asia/Calcutta` | `…36.123` | `…36` (no fraction) |
+|---|---|---|---|---|
+| the old `.ff8`, unzoned | ORA-01830 | ORA-01830 | OK | OK |
+| `.ff9 TZR` | OK | OK | OK | **ORA-01843** |
+| `.ff9 TZH:TZM` | OK | **ORA-01858** | OK | OK |
+
+`TZH:TZM` would have been strictly additive but cannot express a region name, and a region name is
+the only form that stays correct across a daylight-saving transition — so it buys the zone and
+loses it again twice a year. `TZR` alone would have broken a caller hand-writing a fraction-less
+string, which works today. **So the leniency was put where it can be seen and tested rather than
+into the mask**: `PlsqlIndexByTable2.ensureFractionalSeconds()`, emitted into the generated
+`bindParams` for zoned elements only.
+
+**2. `JavaUtils`.** *Decision: yes, and the reason found on the way in is the important part.* The
+second ladder is not a duplicate of `SqlUtils`' — `oracle2JavaDatatype` delegates, so there was no
+duplicate to worry about. The one that mattered is
+`JavaUtils.mapOracleDatatypeToAlphaCharOrLength`, whose returned **letter is the discriminator in
+the shadow type's NAME** (`Q`, `H`, `T` → `OSOFTBQ_A`, `OSOFTBH_A`, `OSOFTBT_A`). That is the whole
+mechanism of the collision: a spelling that misses the `Q`/`H` arms is handed the unzoned type's
+name and dedupes into it.
+
+**3. What an LTZ renders as.** *Decision: the same `TZR` mask as TZ.* Measured that `TO_CHAR`
+accepts `TZR` for a LOCAL value on both lines — it does not error — and renders the **session**
+zone, e.g. `2019-03-01 08:55:36.123000000 GMT`. Emitting it beats omitting it: a bare wall clock
+does not say which zone it is a wall clock in. One line serves both types.
+
+**4. Backward compatibility.** *Answered: yes, preserved, and it needed the work in decision 1.*
+`TZR` with a zone-less value is accepted and takes the session zone — same answer as today — **but
+only if a fractional part is present**, which is precisely why `ensureFractionalSeconds()` exists.
+
+**5. SOAP scope.** *Decision: fix it in this pass — and it turned out cheap.* Priced as "a new WS
+type and new generated conversion helpers"; in fact the zoned element crosses as `String[]`, and
+`createIndexByTableFromStringArray` / `createStringArrayFromIndexByTable` **already exist**, so it
+needed two dispatch arms and no new emitted code. A zone crosses SOAP as text for the same reason a
+duality-view document does: `java.sql.Timestamp` has nowhere to put one.
 
 ## Reproducer
 

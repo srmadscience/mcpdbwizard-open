@@ -41,6 +41,27 @@ public class PlsqlIndexByTable2 implements PlsqlArray {
     public static final String ORACLE_TIMESTAMP_TO_CHAR_MASK = "yyyy-mm-dd hh24:mi:ss.ff8";
 
     /**
+     * Date format mask used by Oracle for converting a ZONED timestamp to and from String.
+     *
+     * <p><b>{@code TZR} rather than {@code TZH:TZM}, and the choice is not arbitrary.</b> Measured
+     * against 12c and 23ai: {@code TZR} accepts both a numeric offset ({@code +05:30}) and a region
+     * name ({@code Asia/Calcutta}), where {@code TZH:TZM} accepts only the offset and rejects a
+     * region with ORA-01858. A region name is the only form that survives a daylight-saving
+     * transition correctly, so losing it would leave the zone technically present and practically
+     * wrong twice a year.
+     *
+     * <p><b>The cost, and why {@link #ensureFractionalSeconds()} exists.</b> Adding a zone element
+     * to the mask makes Oracle stop tolerating a missing fractional-seconds part: this mask rejects
+     * {@code '2019-03-01 14:25:36'} with ORA-01843, which the older unzoned
+     * {@link #ORACLE_TIMESTAMP_TO_CHAR_MASK} accepts. That would have been a silent regression for
+     * anyone hand-writing timestamp strings, so the value is normalised before it is bound rather
+     * than the mask being weakened.
+     *
+     * @since 2.0.0
+     */
+    public static final String ORACLE_TIMESTAMPTZ_TO_CHAR_MASK = "yyyy-mm-dd hh24:mi:ss.ff9 TZR";
+
+    /**
      * Date format mask used by Oracle for converting date to String
      */
     public static final String ORACLE_DATE_TO_CHAR_MASK = "yyyy-mm-dd hh24:mi:ss";
@@ -992,6 +1013,87 @@ public class PlsqlIndexByTable2 implements PlsqlArray {
         }
 
         return (newArray);
+    }
+
+    /**
+     * Give every element a fractional-seconds part, so that a zoned conversion mask will accept it.
+     *
+     * <p>Generated code calls this on a {@code TIMESTAMP WITH [LOCAL] TIME ZONE} index-by table
+     * immediately before binding, and on nothing else. It exists because
+     * {@link #ORACLE_TIMESTAMPTZ_TO_CHAR_MASK} carries a {@code TZR} element, and Oracle stops
+     * tolerating a missing fraction once the mask names a zone: {@code '2019-03-01 14:25:36'}
+     * parses under the unzoned mask and raises ORA-01843 under the zoned one. Rather than weaken
+     * the mask -- which would cost region-name support, the half of the fix that matters across a
+     * daylight-saving boundary -- the value is made acceptable here.
+     *
+     * <p>The transformation is deliberately narrow: it appends {@code .0} to the <em>time</em>
+     * token of a {@code date time [zone]} string that has no {@code .} in that token, and leaves
+     * everything else exactly as it was. So {@code '2019-03-01 14:25:36 +05:30'} becomes
+     * {@code '2019-03-01 14:25:36.0 +05:30'} -- the zone is not touched and cannot be reordered --
+     * while a value that already carries a fraction, a null, a non-String element, or anything that
+     * does not look like a timestamp at all is passed through untouched. **It must not try to
+     * validate**: a malformed value should still reach Oracle and be rejected there, with Oracle's
+     * own message, rather than be silently altered into something that parses.
+     *
+     * @since 2.0.0
+     */
+    public void ensureFractionalSeconds() {
+        if (dataArray == null) {
+            return;
+        }
+
+        for (int i = 0; i < dataArray.length; i++) {
+            if (!(dataArray[i] instanceof String)) {
+                continue;
+            }
+
+            String theValue = (String) dataArray[i];
+            // date, time, and optionally a zone -- anything else is left alone rather than guessed at.
+            int firstSpace = theValue.indexOf(' ');
+            if (firstSpace < 0) {
+                continue;
+            }
+
+            int secondSpace = theValue.indexOf(' ', firstSpace + 1);
+            String theTime = (secondSpace < 0)
+                    ? theValue.substring(firstSpace + 1)
+                    : theValue.substring(firstSpace + 1, secondSpace);
+
+            if (theTime.indexOf('.') > -1 || !looksLikeAClockTime(theTime)) {
+                continue;
+            }
+
+            dataArray[i] = (secondSpace < 0)
+                    ? theValue + ".0"
+                    : theValue.substring(0, secondSpace) + ".0" + theValue.substring(secondSpace);
+        }
+    }
+
+    /**
+     * Is this token a clock time -- digits and colons, with at least one colon?
+     *
+     * <p>The guard that keeps {@link #ensureFractionalSeconds()} from editing a value it does not
+     * understand. Without it the second token of any three-token string gets a {@code .0} appended,
+     * so a malformed value would be altered on its way to Oracle and refused with a message
+     * describing the altered text rather than what the caller actually passed.
+     *
+     * <p>Deliberately NOT a full validation: {@code 99:99:99} passes here and is Oracle's problem,
+     * which is the correct division of labour. This only has to be sure the token is the shape a
+     * fraction can be appended to.
+     */
+    private static boolean looksLikeAClockTime(String theToken) {
+        if (theToken.length() == 0 || theToken.indexOf(':') < 0) {
+            return (false);
+        }
+
+        for (int i = 0; i < theToken.length(); i++) {
+            char c = theToken.charAt(i);
+            if (c != ':' && (c < '0' || c > '9')) {
+                return (false);
+            }
+        }
+
+        return (true);
     }
 
     /**
