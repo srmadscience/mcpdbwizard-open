@@ -1,121 +1,255 @@
-# TZ index-by collections bind as VARCHAR on 18c+ — plan
+# TZ index-by collections lose the time zone — plan
 
-> **OPEN, not started.** Diagnosis measured 2026-08-15; no fix attempted beyond three that were
-> tried and reverted (see "Do not repeat"). Estimated one focused session plus an estate run.
+> **OPEN, not started.** Diagnosis re-measured end to end on 2026-08-20 against a 12c server and a
+> 23ai-line server. **The 2026-08-15 diagnosis this file used to carry was wrong in its central
+> claim** — see "Corrections" below before reading anything else, and before quoting the matching
+> paragraph in `CLAUDE.md`.
+>
+> The fixture schema and the `.sql` files named here are **not part of the published repository**;
+> `Scripts/check_provisioning.sh` will name the objects a config expects if you want to build
+> equivalents.
 
-## The defect
+## The defect, as measured
 
 A PL/SQL index-by collection whose element is `TIMESTAMP WITH [LOCAL] TIME ZONE`:
 
 ```sql
 type timestamp_tz_iba is table of timestamp with time zone index by binary_integer;
-procedure ts_tz_sample(p_in in timestamp_tz_iba, p_in_out in out timestamp_tz_iba, ...);
+procedure test_timestamp_tz(p_in in timestamp_tz_iba, p_in_out in out timestamp_tz_iba,
+                            p_out out timestamp_tz_iba);
 ```
-(`app/sql/generic_testd.sql`, package `IBA_TEST`)
 
-generates **different binding strategies on different Oracle lines**:
+crosses JDBC through a **`VARCHAR2` shuttle whose conversion masks carry no time zone**, so the
+zone cannot be sent and is not returned. The generated wrapper builds this anonymous block:
 
-| | 12c (ORCL12) | 18c / 19c / 21c / 23ai / 26ai |
+```sql
+TYPE P_IN_t IS TABLE OF VARCHAR2(30) INDEX BY BINARY_INTEGER;   -- the shuttle
+p_in IBA_TEST.TIMESTAMP_TZ_IBA;
+...
+FOR i IN P_IN_v.FIRST..P_IN_v.LAST LOOP
+  p_in(i) := TO_TIMESTAMP(P_IN_v(i),'yyyy-mm-dd hh24:mi:ss.ff8');            -- IN
+END LOOP;
+IBA_TEST.TEST_TIMESTAMP_TZ(p_in => p_in, p_in_out => p_in_out, p_out => p_out);
+FOR i IN p_out.FIRST..p_out.LAST LOOP
+  IF p_out.exists(i) THEN P_OUT_v(i) := TO_CHAR(p_out(i),'yyyy-mm-dd hh24:mi:ss.ff8'); END IF;
+END LOOP;
+```
+
+Three things are wrong in those two lines, and each is independently sufficient:
+
+1. **`TO_TIMESTAMP`, not `TO_TIMESTAMP_TZ`.** The value assigned into a `TIMESTAMP WITH TIME ZONE`
+   variable has no zone, so PL/SQL attaches the **session** zone silently.
+2. **The mask has no `TZR`/`TZH:TZM`.** So an input carrying a zone does not parse at all, and an
+   output carrying a zone is rendered without it.
+3. **The shuttle is `VARCHAR2(30)`.** `'2019-03-01 14:25:36.123 +05:30'` is exactly 30 characters;
+   a region name (`Asia/Calcutta`) needs far more.
+
+**Measured behaviour, both Oracle lines, through the generated DAO:**
+
+| input | 12c | 23ai line |
 |---|---|---|
-| element resolves as | a typed array | `ORACLE_SCALER_TYPE` |
-| bound through | a real SQL array type | `PlsqlIndexByTable2` |
-| `extraObjects.sql` | `OSOFTBH_A AS TABLE OF TIMESTAMP(9) WITH TIME ZONE` | *(absent)* |
-| emitted wrapper | typed | `new PlsqlIndexByTable2(oracle.jdbc.OracleTypes.VARCHAR, 6)` |
+| `2019-03-01 14:25:36.123 +05:30` | `ORA-01830` | `ORA-01830` |
+| `2019-03-01 14:25:36.123` (no zone) | OK → returns `2019-03-01 14:25:36.12300000` | identical |
 
-**`PlsqlIndexByTable2` is deliberately binary — VARCHAR or numeric only.** So on five of the six
-boxes a timestamp-with-time-zone collection is **bound as strings**.
+So the zone is not *corrupted*, it is **unreachable**: there is no value a caller can supply that
+carries one, and no value they get back that reveals one. The instant depends on the session time
+zone of whichever process happened to make the call.
 
-**Why that is worse than it sounds.** `oracle.sql.TIMESTAMPTZ`'s string constructor SILENTLY
-DISCARDS a numeric UTC offset — `"… +05:30"` comes back as `GMT`, wall clock preserved, instant
-moved by 5½ hours (recorded in `app/CLAUDE.md` under the driver hazard). A region name survives; an
-offset does not. So the failure is not "it throws", it is "the instant is wrong".
+**The fix shape is proven to work.** Run against both lines, `TO_TIMESTAMP_TZ` with a `TZR` mask
+round-trips **both** an offset and a region name through the same procedure:
 
-The MCP layer already refuses this shape for exactly this reason — `mcpProcUnsupportedReason`
-rejects a date or raw index-by because `PlsqlIndexByTable2` cannot carry them. **The DAO wrapper has
-no such refusal and generates the VARCHAR bind anyway.**
+```
+in [2019-03-01 14:25:36.123 +05:30]        out [2019-03-01 14:25:36.123000000 +05:30]
+in [2019-03-01 14:25:36.123 Asia/Calcutta] out [2019-03-01 14:25:36.123000000 ASIA/CALCUTTA]
+```
 
-## Why it survived
+`TZR` accepts both forms, so one mask covers both and no per-value branching is needed.
 
-`generic_testd` generates 119 files and is green on all six boxes. Nothing drives these two
-procedures: `T10GPlsqlIndexBy` covers `Ts` / `Date` / `Raw` / number index-by tables and
-`IbaTestTestNumber`, but **not** `IbaTestTestTimestampTz` or `…Ltz`. The divergence is invisible to
-the suite and to the file counts.
+## The second, separable symptom: a shadow-type collision on the truncating line
 
-## Do not repeat — three explanations, all measured and disproved
+Under `EXTRA_SQL`, `extraObjects.sql` on 12c declares three collection types where the truncating
+line declares one:
 
-1. **"The NPEs cause it."** `generic_testd`'s genlog carries 84 `Cannot invoke "String.length()"`
-   errors. They are IDENTICAL in count in the passing 119-file run and the failing 115-file one.
-   Long-standing noise that generation swallows; unrelated. (Worth its own look one day — 84
-   swallowed errors in a green propfile is not nothing.)
-2. **"Normalise `elem_type_name` with the existing decode."** Tried. Produces the two missing type
-   declarations AND drops the propfile to 115 files, losing `IbaTestTestTimestampTz`, `…TzReturn`,
-   `…Ltz`, `…LtzReturn`. `SAAdminWrangler` (~2126) already handles these elements and matches on the
-   **RAW** spelling (`"TIMESTAMP WITH LOCAL TZ"`), so normalising breaks that match; the element is
-   then hunted as a record and the log shows a bogus `Found
-   SYS.TS_LTZ_SAMPLE.TIMESTAMP_WITH_LOCAL_TIME_ZONE`. **The un-normalised name at the
-   collection arm is deliberate.**
-3. **"Fix the shadow-type DDL in `ExtraType` (~258)."** The type never reaches that path on a
-   truncating box, so there is nothing there to fix.
+| | 12c | 18c / 19c / 21c / 23ai / 26ai |
+|---|---|---|
+| `TIMESTAMP` element | `OSOFTBT_A AS TABLE OF TIMESTAMP(9)` | same |
+| `TIMESTAMP WITH LOCAL TIME ZONE` | `OSOFTBQ_A AS TABLE OF TIMESTAMP(9) WITH LOCAL TIME ZONE` | *absent* |
+| `TIMESTAMP WITH TIME ZONE` | `OSOFTBH_A AS TABLE OF TIMESTAMP(9) WITH TIME ZONE` | *absent* |
 
-**And the meta-trap:** checking `extraObjects.sql` alone made hypothesis 2 look like a success. Only
-the FILE COUNT exposed it. Any attempt must check both.
+**This is a COLLISION, not an absence, and that is worse.** The generated collection classes exist
+on both lines, but on the truncating line `IbaTestTimestampTzIba.recordName` and
+`IbaTestTimestampLtzIba.recordName` **both read `OSOFTBT_A`** — the zone-less type. The generator
+does not know the three elements differ, so it dedupes them into one.
+
+Root cause, one line, in the runtime library:
+
+```java
+// SqlUtils.getUnderlyingOracleDatatype
+} else if (theColumnDataType.equals("TIMESTAMP WITH TIME ZONE")
+        || theColumnDataType.equals("TIMESTAMPTZ")
+        || (theColumnDataType.startsWith("TIMESTAMP")
+        && theColumnDataType.endsWith("TIME ZONE"))) {
+```
+
+`ALL_ARGUMENTS` (12c) spells it `TIMESTAMP WITH TIME ZONE`; `ALL_PLSQL_COLL_TYPES` — the view the
+synthesis reads on every truncating version — spells it **`TIMESTAMP WITH TZ`**, which starts with
+`TIMESTAMP` and does **not** end with `TIME ZONE`. Measured:
+
+```
+TIMESTAMP WITH TIME ZONE        -> 13  (ORACLE_TIMESTAMPTZ_DATATYPE)
+TIMESTAMP WITH LOCAL TIME ZONE  -> 14  (ORACLE_TIMESTAMPLTZ_DATATYPE)
+TIMESTAMP WITH TZ               -> 12  (ORACLE_TIMESTAMP_DATATYPE)   <-- wrong
+TIMESTAMP WITH LOCAL TZ         -> 12  (ORACLE_TIMESTAMP_DATATYPE)   <-- wrong
+```
+
+**Two classifiers disagree, and that is the trap.** `SAAdminWrangler` (~2126) already handles the
+abbreviated spellings and sets `typeRecordClass = oracle.sql.TIMESTAMPTZ` correctly — which is why
+the generated Java class still has an `oracle.sql.TIMESTAMPTZ[]` constructor while the Oracle type
+behind it is zone-less. Fixing the classifier is what closes the gap between them.
+
+## Corrections — what this file and `CLAUDE.md` previously got wrong
+
+Each of these was stated as measured fact and repeated. All four are disproved by the runs above.
+
+1. **"12c emits a real SQL array type and binds through it; the truncating line stringifies."**
+   **WRONG.** The generated wrapper `IbaTestTestTimestampTz.java` is **byte-identical** on ORCL12
+   and FREE26 apart from the build timestamp. Both emit
+   `new PlsqlIndexByTable2(oracle.jdbc.OracleTypes.VARCHAR, 6)`,
+   `setDataType(oracle.jdbc.OracleTypes.TIMESTAMP)` and `setElementMaxLength(28)`. **Both
+   stringify.** There is no per-version binding strategy to converge on.
+2. **"The two Oracle lines use DIFFERENT BINDING STRATEGIES."** Follows from 1; also wrong. The
+   only cross-version difference is the shadow-type collision above, and the classes that name it
+   are **unreferenced** anywhere in the generated tree — so today that difference has no runtime
+   consequence at all. It is a latent hazard, not the live defect.
+3. **"Expect PASS on ORCL12 and FAIL on the other five."** Wrong: it fails on **all six**. Any
+   Phase-0 test written to that expectation would be marked as passing on the one box where it
+   should have been reddest.
+4. **`Found SYS.TEST_TIMESTAMP_TZ.TIMESTAMP_WITH_TIME_ZONE` in the log was cited as the signature
+   of the reverted fix.** It is not. That exact line appears in a **normal, healthy ORCL12 run**.
+   It is noise and proves nothing either way.
+
+Also corrected: the `generic_testd` file-count gap (**119 on ORCL12, 117 elsewhere**) is **not** the
+TZ classes — both exist on both lines. The two missing files are `LRowCur.java` and
+`LRowCurAttrs.java`, a REF CURSOR row type. **A separate gap; do not use the count as this defect's
+regression signal.**
+
+## Still standing from the earlier diagnosis — do not repeat
+
+1. **"Normalise `elem_type_name` in the collection query with the existing decode."** Tried,
+   measured, reverted. It rewrites the *string*, which the `SAAdminWrangler` raw-spelling match at
+   ~2126 depends on, so the element is then hunted as a record and four wrapper files are lost.
+   **The fix below changes the CLASSIFIER, not the string** — that distinction is the whole reason
+   it is not the same attempt again, and any patch must be checked against it.
+2. **"Fix the shadow-type DDL in `ExtraType` (~258)."** The type never reaches that path on a
+   truncating box.
+3. **The 84 `Cannot invoke "String.length()"` NPEs in this propfile's genlog are unrelated** —
+   identical in count in passing and failing runs. Worth their own look one day.
+4. **Check the FILE COUNT as well as `extraObjects.sql`.** Checking the DDL alone is what made the
+   reverted attempt look like a success.
 
 ## Phases
 
-**Phase 0 — make it a failing test.** Extend `T10GPlsqlIndexBy` (or add a sibling) to round-trip a
-TZ and an LTZ index-by through `IbaTestTestTimestampTz` / `…Ltz` with a value carrying a **numeric
-offset** (`+05:30`), not a region name — the offset is what the string path loses. Expect PASS on
-ORCL12 and FAIL on the other five. **Nothing else starts until the defect is a red test**, because
-every hypothesis so far looked right until measured.
+**Phase 0 — make it a red test, on all six boxes.**
+Add a harness driving `IbaTestTestTimestampTz` / `…Ltz` with a value carrying a **numeric offset**
+(`+05:30`) and one carrying a **region name** (`Asia/Calcutta`). Assert the value comes back with
+its zone intact. Expect **FAIL everywhere** — today the offset form raises `ORA-01830` and the
+zone-less form silently returns a zone-less value. `T10GPlsqlIndexBy` is the natural home; it
+already covers `Ts` / `Date` / `Raw` / number index-by tables and stops short of these two.
+**Nothing else starts until this is red on a 12c box**, because the box previously believed correct
+is the one the old plan would have exempted.
 
-**Phase 1 — understand 12c's route, don't guess it.** Establish, from a real ORCL12 run, how the
-element is classified, what `getChildRecord` returns, which `objectType` it carries, and where
-`OSOFTBH_A` is created. The truncating path must arrive at the same place; today nobody has written
-down what that place is. Output: a short note in this file, not code.
+**Phase 1 — classify the abbreviated spellings.**
+`SqlUtils.getUnderlyingOracleDatatype`: recognise `TIMESTAMP WITH TZ` → `ORACLE_TIMESTAMPTZ_DATATYPE`
+and `TIMESTAMP WITH LOCAL TZ` → `ORACLE_TIMESTAMPLTZ_DATATYPE`. Purely additive to a decode ladder,
+but it is in **`com.mcpdbwizard.pub`**, whose signatures are load-bearing for every program this
+generator has ever produced — the return value changes for two inputs that previously mapped to
+plain `TIMESTAMP`, so it must be treated as a behaviour change and regression-run, not waved
+through as a one-liner. **`JavaUtils` carries a second copy of the same ladder (~856); decide
+deliberately whether it moves too** — if it does, `oracle2JavaDatatype` starts returning
+`oracle.sql.TIMESTAMPTZ` directly and the `SAAdminWrangler` raw-spelling rescue at ~2126 stops
+firing. That is arguably the tidier end state and is certainly a different code path; do not change
+both halves in one commit without a byte-diff between them.
 
-**Phase 2 — classify the element correctly on the truncating versions.** The element must resolve to
-the same typed shape 12c produces, WITHOUT normalising `elem_type_name` (hypothesis 2). Likely means
-teaching the synthesis/classification arm that `TIMESTAMP WITH TZ` / `TIMESTAMP WITH LOCAL TZ` are
-TZ scalars, in the vocabulary the existing `SAAdminWrangler` match already speaks.
+**Phase 2 — give the index-by element ladder TZ arms.**
+`CallableStatementParameterEngine` (~1032) has arms for TEXT / DATE / TIMESTAMP / NUMBER / BINARY
+and an `else` that throws `CSUnsupportedDatatypeException`. Add `ORACLE_TIMESTAMPTZ_DATATYPE` and
+`ORACLE_TIMESTAMPLTZ_DATATYPE` arms setting `plsqlIndexByDataType` to
+`OracleTypes.TIMESTAMPTZ` / `TIMESTAMPLTZ`, `plsqlIndexByRealDataType` to `VARCHAR`,
+`plsqlIndexByDataDecPlaces` to 9, and a **`plsqlIndexByDataLength` wide enough for a region name**
+— 64 rather than the 28 the plain-TIMESTAMP arm uses. **Note that after Phase 1 this ladder's
+`else` becomes reachable on 12c for the first time**, since 12c's `TIMESTAMP WITH TIME ZONE` was
+already classifying as 13/14 and only ever reached the TIMESTAMP arm because the walk it fed came
+from a different query. Adding the arms is therefore required by Phase 1, not merely enabled by it.
 
-**Phase 3 — verify on both lines.** `generic_testd` on FREE26 and ORCL12: `extraObjects.sql`
-identical, **file count 119 on both**, Phase 0's test green everywhere. Then the full estate.
+**Phase 3 — fix the four emission sites that write the masks.**
+`CallableStatementParameterEngine` lines ~7290, ~7292 (IN) and ~7565, ~7568 (OUT), plus the shuttle
+declaration at ~7049 and the `setDataType` ladder at ~4752 / ~4888. Emit
+`TO_TIMESTAMP_TZ(v,'yyyy-mm-dd hh24:mi:ss.ff9 TZR')` on the way in and
+`TO_CHAR(x,'yyyy-mm-dd hh24:mi:ss.ff9 TZR')` on the way out. **`TZR` covers both an offset and a
+region name — verified on both lines — so resist adding a second mask and a fallback.** New masks
+belong beside the existing `ORACLE_TIMESTAMP_TO_CHAR_MASK` / `ORACLE_DATE_TO_CHAR_MASK` constants
+on `PlsqlIndexByTable2`, since that is where the emitter already reads them from.
+**Decide the LTZ semantics explicitly:** an `LTZ` value has no zone of its own — it is normalised to
+the session zone — so `TO_CHAR(..., 'TZR')` on one renders the *session's* zone. That may be the
+right answer or may be misleading; it is a decision, not a detail.
 
-**Phase 4 — consider the sibling shapes.** `DATE` and `RAW` index-by are rejected by MCP for the
-same reason but still generate VARCHAR/numeric binds in the DAO layer. Decide whether they are the
-same defect (probably) and whether they are in scope (separate call).
+**Phase 4 — the runtime library's element conversion.**
+`PlsqlIndexByTable2` can only carry `String` or `BigDecimal`, and its constructor builds a
+`DecimalFormat` whenever precision is non-zero — so on a precision-6 table `theDateFormat` is left
+null and `setArray(Object[])` with anything that is not a `String` throws from `DecimalFormat`. A
+caller can therefore only use the `String` path today. Two additive methods —
+`setArray(oracle.sql.TIMESTAMPTZ[])` and `getArrayAsTimestamptz()` — give the typed route without
+touching a signature. **Additive only**: this class ships with every generated DAO layer, and
+`getArrayAsTimestamp()` must keep behaving exactly as it does for the existing element kinds.
+
+**Phase 5 — verify.**
+`generic_testd` on a 12c box and a 23ai-line box: `extraObjects.sql` identical, **three distinct
+timestamp collection types on both**, `IbaTestTimestampTzIba`/`…Ltz` naming their own type rather
+than `OSOFTBT_A`, Phase 0 green on all six. Then the full estate — this touches `SqlUtils` and the
+engine's shared emission ladders, so byte-identity with earlier trees will break for **every**
+config that has a date or timestamp index-by, and that must be inspected rather than assumed
+benign.
+
+**Phase 6 — the sibling shapes, as a separate call.**
+`DATE` index-by has the same shape and the same `TO_DATE`/`TO_CHAR` treatment; it loses nothing
+today because a `DATE` has no zone, so it is genuinely fine. **A bare `TIMESTAMP` index-by is
+fine too.** What is *not* obviously fine is `INTERVAL`, which has no arm at all and hits the
+`else`. Decide whether that is in scope.
 
 ## Decisions wanted before starting
 
-1. **Is a wrong instant acceptable until fixed?** If not, an interim guard is cheap: make the
-   generator REFUSE a TZ index-by param on the truncating versions — the wrapper stops generating,
-   which is loud, rather than binding strings, which is silent. That trades four generated files for
-   honesty and would need the floors adjusted.
-2. **Scope: TZ only, or `DATE`/`RAW` index-by too?** Same root cause, wider blast radius.
-3. **Does any customer rely on the current VARCHAR behaviour?** If a deployment feeds region-name
-   strings it works today and would keep working; an offset silently does not.
+1. **Is an unreachable time zone acceptable until fixed?** It is not a wrong answer *returned* —
+   the offset form raises `ORA-01830` loudly. The silent case is the zone-less one, where the
+   session zone is assumed. If that is unacceptable now, the cheap interim is to make
+   `mcpProcUnsupportedReason`'s existing refusal apply to the **DAO** layer as well, so a TZ
+   index-by refuses to generate rather than generating something that cannot express a zone.
+   That trades four generated files for honesty and moves the floors.
+2. **Does `JavaUtils`' copy of the ladder move with `SqlUtils`' (Phase 1)?**
+3. **What should an LTZ render as (Phase 3)?**
+4. **Does any deployment rely on the current zone-less string behaviour?** Anything feeding
+   `yyyy-mm-dd hh24:mi:ss.ff` strings works today and must keep working; the new mask must still
+   accept a zone-less input. **`TZR` on `TO_TIMESTAMP_TZ` with no zone in the value has not been
+   measured — check it before assuming backward compatibility.**
 
 ## Reproducer
 
-Needs two servers: one on the 23ai line (which truncates `ALL_ARGUMENTS`) and one 12c
-(which does not). Substitute your own hosts below — `Scripts/boxes.env` names them if you
-have one.
+Needs two servers: one on the 23ai line and one 12c. Substitute your own hosts.
 
 ```sh
-# on a TRUNCATING box (23ai line)
-MCPDBWIZARD_TEST_HOST=$TRUNCATING_HOST MCPDBWIZARD_TEST_SID=/$TRUNCATING_SID \
-MCPDBWIZARD_TEST_URL="jdbc:oracle:thin:@$TRUNCATING_HOST:1521/$TRUNCATING_SID" \
-  app/Scripts/testrun_current.sh generic_testd
-grep -n "PlsqlIndexByTable2" app/target/regen/Src/generic_testd/*/*/*/*/*/*/plsql/IbaTestTestTimestampTz.java
-# -> new PlsqlIndexByTable2(oracle.jdbc.OracleTypes.VARCHAR, 6)
-
-# then on a 12c box (MCPDBWIZARD_TEST_HOST=$ORACLE12_HOST MCPDBWIZARD_TEST_SID=/$ORACLE12_SID), diff:
-#   app/target/regen/Src/generic_testd/*/*/*/*/*/*/extraObjects.sql
+# generate the same config against each, into separate trees, and diff
+#   the wrapper  -> expect IDENTICAL (that is the point)
+#   extraObjects -> expect three timestamp collection types on 12c, one elsewhere
+#   the two collection classes' recordName -> expect the collision on the truncating box
+grep -n "recordName" <tree>/plsql/IbaTestTimestampTzIba.java \
+                     <tree>/plsql/IbaTestTimestampLtzIba.java
 ```
 
-**Check the FILE COUNT too**, not just `extraObjects.sql` — floor 119 for `generic_testd`.
-The wrong fix produces the two missing type declarations while dropping four wrapper
-files, so the diff alone makes it look right.
+For the live half, drive the generated wrapper directly:
+
+```java
+p.paramPIn.setArray(new Object[]{ "2019-03-01 14:25:36.123 +05:30" });
+p.executeProc();                        // ORA-01830 today, on every version
+```
 
 Copyright 2003-2026 ATB Consultancy Services Ltd
 (formerly Orinda Software Ltd, Dublin, Ireland)
