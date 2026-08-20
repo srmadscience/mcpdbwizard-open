@@ -188,9 +188,29 @@ own.
 | `src/main/java/com/mcpdbwizard/mcpdbwizardconnector` | JSON / JSON‑RPC connector generator |
 | `examples/generated-output` | a checked‑in example of generator output, regenerated 2026‑08‑07 |
 | `Scripts/` | regeneration, provisioning checks, and the export gate |
+| [API docs](https://srmadscience.github.io/mcpdbwizard-open/) | generated javadoc for `com.mcpdbwizard.pub`, the library you link against |
 
 Contributor notes — architecture, conventions and accumulated gotchas — are in
 [`CLAUDE.md`](CLAUDE.md).
+
+---
+
+## API documentation
+
+**[API docs for `com.mcpdbwizard.pub`](https://srmadscience.github.io/mcpdbwizard-open/)**
+
+That is the runtime library generated code links against, and the only package documented — the
+generator's own internals are implementation, and publishing them would bury the part you call.
+The package summary explains what to reach for, and carries the compatibility contract: signatures
+there are load-bearing for every program this generator has produced, so they gain methods and do
+not change them.
+
+The same pages are on the project site at
+[mcpdbwizard.com/javadoc](https://mcpdbwizard.com/javadoc/). Both are regenerated from source on
+publish rather than copied from one another.
+
+Locally, `mvn javadoc:javadoc` writes them to `target/reports/apidocs/`. It runs with
+`failOnWarnings`, so a broken `@link` fails the build rather than shipping a dead cross-reference.
 
 ---
 
