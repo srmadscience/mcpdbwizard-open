@@ -158,22 +158,23 @@ cp Scripts/boxes.env.template                        Scripts/boxes.env
 Per setting, an environment variable (`MCPDBWIZARD_TEST_HOST`, …) always wins over the file, which
 is how a run selects one server over another.
 
-A third tier links against **generator output**: `Scripts/testrun_current.sh` regenerates and
-compiles code from every config in `Propfiles/`, and the `T*` harnesses in
-`src/test/generated-harnesses/` then drive that code against the live database. They compile
-only when the regenerated tree exists, so they stay invisible until you ask for them.
+A third tier links against **generator output**: `Scripts/testrun_current.sh` regenerates code
+from a set of configs and compiles it, and a family of harnesses then drives that code against a
+live database.
 
-Before generating, `Scripts/check_provisioning.sh` verifies that every object the configs name
-is actually present — a missing fixture otherwise costs you coverage silently rather than
-failing loudly.
+**That tier is not part of this repository, and neither are the schemas it needs.** The configs
+introspect Oracle schemas whose structure is not ours to publish — some of it came from customer
+work years ago — and a config *enumerates* the schema it points at, so the configs cannot ship
+either. The harnesses go with them: they name those schemas' tables and routines, and they only
+compile against a regenerated tree that cannot exist here.
 
-**The schemas those configs introspect are not in this repository.** The DDL behind them
-carried the table and package layout of third‑party systems, which is not ours to publish, so
-it stays private in full rather than in part. What this means in practice: the first two tiers
-are unaffected — the database‑free suite is green on a fresh clone, and the gated live tests
-skip — but the third tier has nothing to point at until you supply schemas of your own. The
-configs in `Propfiles/` still show the format, and `Scripts/check_provisioning.sh` will tell
-you exactly which objects a config expects to find.
+What that costs you: nothing to run the generator, and nothing to run the suite. The
+database-free tests are complete and green on a fresh clone; the gated live tests skip. What you
+do not get is a ready-made corpus to regenerate against. `Scripts/check_provisioning.sh` stays,
+and will name the exact objects a config expects, which is the place to start if you build your
+own.
+
+`examples/generated-output/` shows what the generator emits, with no database at all.
 
 ---
 
@@ -186,7 +187,6 @@ you exactly which objects a config expects to find.
 | `src/main/java/com/mcpdbwizard/schema` | typed model of a config; `.pb2` ↔ `.json` |
 | `src/main/java/com/mcpdbwizard/mcpdbwizardconnector` | JSON / JSON‑RPC connector generator |
 | `examples/generated-output` | a checked‑in example of generator output, regenerated 2026‑08‑07 |
-| `Propfiles/` | generator configurations used by the test suite |
 | `Scripts/` | regeneration, provisioning checks, and the export gate |
 
 Contributor notes — architecture, conventions and accumulated gotchas — are in

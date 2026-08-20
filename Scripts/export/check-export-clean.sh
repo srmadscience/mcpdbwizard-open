@@ -11,7 +11,10 @@
 #   1. every extended-regex in Scripts/export/denylist.txt
 #   2. any *.jar (Oracle's driver is not redistributable, and no jar belongs in source)
 #   3. the two files that must exist as templates only
-#   4. --staged only: sql/ OtherDbs/ Propfiles/ Sqlfiles/ must all be ABSENT
+#   4. --staged only, three things the FILTER cannot promise on its own:
+#        a. sql/ OtherDbs/ Propfiles/ Sqlfiles/ must all be ABSENT
+#        b. nothing may extend the live-database harness base class
+#        c. no shipped doc may point at a directory that was excluded
 #
 # Usage:
 #   Scripts/export/check-export-clean.sh [tree] [--staged]
@@ -150,6 +153,30 @@ if [ "$STAGED" = 1 ]; then
         grep -rl 'extends AbstractLiveDbHarness' "$TREE/src" 2>/dev/null | sed "s|$TREE/|        |"
         hits=$((hits + 1))
     fi
+
+    # Documentation that points at something we removed. Not pedantry: a README describing a
+    # directory the reader does not have reads as a BROKEN REPOSITORY rather than as a deliberate
+    # omission, and it is the first thing a visitor sees. Caught after the first publish, having
+    # been fixed in CLAUDE.md and missed in README.md and CONTRIBUTING.md.
+    for doc in README.md CONTRIBUTING.md CLAUDE.md; do
+        [ -f "$TREE/$doc" ] || continue
+        for gone in sql OtherDbs Propfiles Sqlfiles; do
+            [ -e "$TREE/$gone" ] && continue
+            # A doc that EXPLAINS the absence is doing the right thing -- app/CLAUDE.md and
+            # README.md both name these directories in order to say they are not here, which is
+            # exactly the reference a reader needs. Only an UNEXPLAINED mention is stale, so a
+            # doc carrying the explanation is exempt. Without this the check punishes the fix.
+            if grep -qE 'not (in|part of) th(is|e published) repositor' "$TREE/$doc" 2>/dev/null; then
+                continue
+            fi
+            if grep -q "$gone/" "$TREE/$doc" 2>/dev/null; then
+                echo
+                echo "  STALE  $doc mentions $gone/ , which this tree does not contain."
+                echo "         Reword it -- a reader cannot tell an omission from a broken repo."
+                hits=$((hits + 1))
+            fi
+        done
+    done
 
     for ddl in sql OtherDbs Propfiles Sqlfiles; do
         if [ -e "$TREE/$ddl" ]; then

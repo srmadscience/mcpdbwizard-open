@@ -20,14 +20,17 @@ Per setting, an environment variable (MCPDBWIZARD_TEST_HOST, ...) always wins ov
 
 ## The test schemas are not in this repository
 
-The configs under Propfiles/ introspect Oracle schemas whose DDL is not published: it carried
-the table and package layout of third-party systems, which is not ours to hand out. So the
-generated-code harnesses -- the tier that regenerates from every config and drives the result
-against a live database -- have nothing to point at until you supply schemas of your own.
+The generator's own test corpus introspects Oracle schemas whose structure is not ours to
+publish -- some of it came from customer work years ago. A generator config ENUMERATES the
+schema it points at, so the configs cannot ship either, and the live-database harnesses go with
+them: they name those schemas' objects, and they only compile against a regenerated tree that
+cannot exist here.
 
 Nothing else is affected. The generator, the runtime library and the database-free suite are
-complete and self-contained, and Scripts/check_provisioning.sh will name the exact objects a
-given config expects, which is the starting point if you want to build a fixture.
+complete and self-contained, and that suite is what `mvn test` runs on a fresh clone.
+
+If you want to exercise the live tier, point the generator at a schema of your own.
+Scripts/check_provisioning.sh will tell you exactly which objects a config expects.
 
 examples/generated-output/ shows what the generator emits, without needing a database at all.
 

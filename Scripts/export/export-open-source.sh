@@ -2,13 +2,18 @@
 #
 # export-open-source.sh -- stage the app module as a publishable, fresh-history repository.
 #
-# WHY A FRESH HISTORY, not a filter of the existing one: Oracle's non-redistributable
-# ojdbc5 jar entered at "Mavenize project", 164 commits back out of 169, and live hosts
-# appear across 28 commits. Filtering would rewrite ~97% of history, change every SHA
-# (breaking the commit ledger the project notes rely on) and require a force-push -- all
-# to reach a state a fresh initial commit reaches by construction, with nothing left to
-# miss. The private repository keeps its provenance; the public one simply never
-# contained any of it.
+# WHY THE FIRST PUBLISH HAD A FRESH HISTORY, rather than a filter of the existing one:
+# Oracle's non-redistributable ojdbc5 jar entered at "Mavenize project", 164 commits back out
+# of 169, and live hosts appear across 28 commits. Filtering would have rewritten ~97% of
+# history, changed every SHA (breaking the commit ledger the project notes rely on) and still
+# required a force-push -- all to reach a state a fresh initial commit reaches by construction,
+# with nothing left to miss. The development repository keeps its provenance; the published one
+# simply never contained any of it.
+#
+# THAT ARGUMENT IS ABOUT COMMIT ONE, AND IT IS FINISHED. Re-running `git init` on every export
+# would rewrite published history and force a --force push, running over anyone who forked or
+# opened a pull request. From the second export onwards this script works inside a CLONE of the
+# published repository and adds an ordinary commit. See step 5.
 #
 # Steps:
 #   1. refuse to run on a dirty working tree (the export must be reproducible)
@@ -19,8 +24,9 @@
 #   3. run the leak gate over the STAGED tree -- abort on any hit
 #   4. require LICENSE + NOTICE, and write CONTRIBUTING + .gitignore
 #   5. BUILD AND TEST the staged tree -- abort if it does not pass
-#   6. git init + one initial commit
-#   7. report what shipped, what did not, and what to do next
+#   6. clone (or reuse) the PUBLISHED repo, rsync the staged tree over it with --delete,
+#      and add ONE ordinary commit. Fast-forward: no force-push, forks and PRs survive.
+#   7. report what changed and what to do next. It does NOT push.
 #
 # Usage:
 #   Scripts/export/export-open-source.sh [destination]
@@ -55,16 +61,16 @@ if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
 fi
 SRC_COMMIT=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)
 
-if [ -e "$DEST" ]; then
-    echo
-    echo "ERROR: $DEST already exists. Remove it or name a different destination."
-    exit 2
-fi
+# The tree is built in a TEMPORARY directory and copied into the published clone only after
+# the leak gate and the build have both passed. Staging straight into the clone would put a
+# leak into the working tree of the repository you are about to push, and the gate's "left for
+# inspection" would mean "left where it can be committed by accident".
+STAGE=$(mktemp -d "${TMPDIR:-/tmp}/mcpdbwizard-export.XXXXXX") || exit 2
+trap 'rm -rf "$STAGE"' EXIT INT TERM
 
 # ---- 2. stage --------------------------------------------------------------
-mkdir -p "$DEST" || exit 2
 if command -v rsync >/dev/null 2>&1; then
-    rsync -a --exclude-from="$SCRIPT_DIR/exclude.txt" "$APP_ROOT/" "$DEST/" || exit 2
+    rsync -a --exclude-from="$SCRIPT_DIR/exclude.txt" "$APP_ROOT/" "$STAGE/" || exit 2
 else
     echo "ERROR: rsync not found (needed to apply exclude.txt)." >&2
     exit 2
@@ -85,7 +91,7 @@ fi
 # redefines both properties, so inlining groupId/version is a complete substitution.
 PARENT_GROUP=$(sed -n 's|.*<groupId>\(.*\)</groupId>.*|\1|p' "$REPO_ROOT/pom.xml" | head -1)
 PARENT_VERSION=$(sed -n 's|.*<version>\(.*\)</version>.*|\1|p' "$REPO_ROOT/pom.xml" | head -1)
-python3 - "$DEST/pom.xml" "$PARENT_GROUP" "$PARENT_VERSION" <<'PYEOF'
+python3 - "$STAGE/pom.xml" "$PARENT_GROUP" "$PARENT_VERSION" <<'PYEOF'
 import re, sys
 path, group, version = sys.argv[1], sys.argv[2], sys.argv[3]
 s = open(path, encoding="utf-8").read()
@@ -121,10 +127,10 @@ PYEOF
 # README says so. Do not "restore" mcpdbwizard_demo_ddl.sql to make it runnable -- the demo
 # schema is ORINDADEMO, it lives in sql/, and sql/ is what we are not publishing.
 if [ -d "$APP_ROOT/sql/Demo/Src" ]; then
-    mkdir -p "$DEST/examples"
-    cp -R "$APP_ROOT/sql/Demo/Src" "$DEST/examples/generated-output" || exit 2
-    find "$DEST/examples/generated-output" -name '.DS_Store' -delete 2>/dev/null
-    cat > "$DEST/examples/README.md" <<'EOF'
+    mkdir -p "$STAGE/examples"
+    cp -R "$APP_ROOT/sql/Demo/Src" "$STAGE/examples/generated-output" || exit 2
+    find "$STAGE/examples/generated-output" -name '.DS_Store' -delete 2>/dev/null
+    cat > "$STAGE/examples/README.md" <<'EOF'
 # Example generator output
 
 `generated-output/` is a checked-in copy of what MCPDBWizard emitted from a small
@@ -143,14 +149,14 @@ generated code is called, not to be run as-is.
 
 Nothing here is on the build path. `pom.xml` compiles `src/main/java` only.
 EOF
-    echo "  kept sql/Demo/Src as examples/generated-output ($(find "$DEST/examples/generated-output" -type f | wc -l | tr -d ' ') files)"
+    echo "  kept sql/Demo/Src as examples/generated-output ($(find "$STAGE/examples/generated-output" -type f | wc -l | tr -d ' ') files)"
 fi
 
 # ---- 3. gate ---------------------------------------------------------------
 echo
-if ! "$SCRIPT_DIR/check-export-clean.sh" "$DEST" --staged; then
+if ! "$SCRIPT_DIR/check-export-clean.sh" "$STAGE" --staged; then
     echo
-    echo "Export aborted; staged tree left at $DEST for inspection."
+    echo "Export aborted. Nothing has touched the published repository."
     echo "Fix the hits in the SOURCE repository, commit, and re-run."
     exit 1
 fi
@@ -160,16 +166,16 @@ fi
 # the staged copy. Refuse to export without them rather than inventing a placeholder:
 # code shipped without a licence is visible, not open source, and nobody may use it.
 for required in LICENSE NOTICE; do
-    if [ ! -f "$DEST/$required" ]; then
+    if [ ! -f "$STAGE/$required" ]; then
         echo
         echo "ERROR: $required is missing from the staged tree."
         echo "Publishing without it would leave the code legally unusable."
         exit 2
     fi
 done
-echo "  LICENSE + NOTICE present ($(wc -l < "$DEST/LICENSE" | tr -d ' ') lines)"
+echo "  LICENSE + NOTICE present ($(wc -l < "$STAGE/LICENSE" | tr -d ' ') lines)"
 
-cat > "$DEST/CONTRIBUTING.md" <<'EOF'
+cat > "$STAGE/CONTRIBUTING.md" <<'EOF'
 # Contributing
 
 ## Running the tests
@@ -192,14 +198,17 @@ Per setting, an environment variable (MCPDBWIZARD_TEST_HOST, ...) always wins ov
 
 ## The test schemas are not in this repository
 
-The configs under Propfiles/ introspect Oracle schemas whose DDL is not published: it carried
-the table and package layout of third-party systems, which is not ours to hand out. So the
-generated-code harnesses -- the tier that regenerates from every config and drives the result
-against a live database -- have nothing to point at until you supply schemas of your own.
+The generator's own test corpus introspects Oracle schemas whose structure is not ours to
+publish -- some of it came from customer work years ago. A generator config ENUMERATES the
+schema it points at, so the configs cannot ship either, and the live-database harnesses go with
+them: they name those schemas' objects, and they only compile against a regenerated tree that
+cannot exist here.
 
 Nothing else is affected. The generator, the runtime library and the database-free suite are
-complete and self-contained, and Scripts/check_provisioning.sh will name the exact objects a
-given config expects, which is the starting point if you want to build a fixture.
+complete and self-contained, and that suite is what `mvn test` runs on a fresh clone.
+
+If you want to exercise the live tier, point the generator at a schema of your own.
+Scripts/check_provisioning.sh will tell you exactly which objects a config expects.
 
 examples/generated-output/ shows what the generator emits, without needing a database at all.
 
@@ -222,7 +231,7 @@ EOF
 # with target/, and the first thing they learn about the project is that it does not ignore its
 # own build output. The private tree's rules for anything under app/, minus the paths that no
 # longer exist here.
-cat > "$DEST/.gitignore" <<'EOF'
+cat > "$STAGE/.gitignore" <<'EOF'
 # --- build output ---
 target/
 out/
@@ -277,62 +286,130 @@ elif ! command -v mvn >/dev/null 2>&1; then
 else
     echo
     echo "  building the staged tree (this is the check that the DDL was really unnecessary)"
-    if (cd "$DEST" && mvn -q -B test > "$DEST/export-build.log" 2>&1); then
+    if (cd "$STAGE" && mvn -q -B test > "$STAGE/export-build.log" 2>&1); then
         echo "  BUILD OK -- the exported tree compiles and its tests pass without sql/ or OtherDbs/"
-        rm -f "$DEST/export-build.log"
+        rm -f "$STAGE/export-build.log"
     else
         echo
         echo "ERROR: the staged tree does not build. Last 40 lines:"
-        tail -40 "$DEST/export-build.log"
+        tail -40 "$STAGE/export-build.log"
         echo
-        echo "Full log: $DEST/export-build.log"
-        echo "Staged tree left at $DEST for inspection. Fix it in the SOURCE repository."
+        echo "Full log: $STAGE/export-build.log"
+        echo "Nothing has touched the published repository. Fix it in the SOURCE repo."
         exit 1
     fi
     # Build output must not become the first commit.
-    rm -rf "$DEST/target"
+    rm -rf "$STAGE/target"
 fi
 
-# ---- 5. fresh history ------------------------------------------------------
+# ---- 5. publish onto the EXISTING history -----------------------------------
+# The fresh `git init` this script used to do was right ONCE and wrong afterwards. The reasoning
+# at the top -- do not filter 169 private commits, start clean instead -- is an argument about
+# the FIRST publish, and it has already done its job: commit 1 is clean by construction. Doing
+# it again on every export would rewrite published history, so every update would need a
+# force-push, and anyone who forked or opened a pull request would be run over.
+#
+# So: work inside a clone of the published repository and add an ordinary commit. Fast-forward,
+# no force, forks and PRs keep working.
+#
+# WHAT WE DELIBERATELY DO NOT DO is replay private commits one by one. That needs every commit
+# filtered (the thing rejected above) and it would publish the commit MESSAGES, which name the
+# private schemas outright. One public commit per export, naming only the private SHA.
+if [ ! -d "$DEST/.git" ]; then
+    if [ -e "$DEST" ]; then
+        echo "ERROR: $DEST exists but is not a git repository." >&2
+        echo "       Move it aside, or name a different destination." >&2
+        exit 2
+    fi
+    echo "  cloning $PUBLIC_REPO"
+    # An EMPTY remote clones fine and yields a repo with no commits, so the very first publish
+    # and every later one take the same path -- the commit below simply becomes the initial one.
+    git clone -q "$PUBLIC_REPO" "$DEST" 2>/dev/null || {
+        echo "ERROR: could not clone $PUBLIC_REPO into $DEST." >&2
+        echo "       Check network and access. To publish somewhere else, pass a destination" >&2
+        echo "       and set PUBLIC_REPO." >&2
+        exit 2; }
+else
+    echo "  reusing the clone at $DEST"
+    git -C "$DEST" pull --ff-only -q 2>/dev/null \
+        || echo "  (nothing to pull, or no upstream yet)"
+fi
+
+# --delete IS THE POINT, not a tidiness flag. Without it a file removed from the private repo
+# quietly SURVIVES in the published one: the private tree looks clean, the public tree still
+# serves the thing you withdrew, and nothing reports a difference. That is exactly the failure
+# this export exists to prevent.
+#
+# .git is excluded for the obvious reason. export-build.log is excluded because the build step
+# writes it into the staging dir on failure and it must never become a published file.
+rsync -a --delete \
+      --exclude '.git/' \
+      --exclude 'export-build.log' \
+      "$STAGE/" "$DEST/" || exit 2
+
 cd "$DEST" || exit 2
-git init -q
 git add -A
-git -c user.name="${GIT_AUTHOR_NAME:-$(git -C "$REPO_ROOT" config user.name)}" \
-    -c user.email="${GIT_AUTHOR_EMAIL:-$(git -C "$REPO_ROOT" config user.email)}" \
-    commit -q -m "Initial public release
 
-MCPDBWizard: an Oracle PL/SQL introspector and Java code generator
-that emits JDBC wrappers, and a Model Context Protocol server exposing them as
-typed agent tools.
+if git diff --cached --quiet 2>/dev/null; then
+    echo
+    echo "  NO CHANGES -- the published tree already matches this commit. Nothing to do."
+    PUBLISHED=unchanged
+else
+    CHANGED=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    if git rev-parse HEAD >/dev/null 2>&1; then
+        SUBJECT="Sync from the development repository at $SRC_COMMIT"
+        BODY="$CHANGED file(s) changed.
 
-Exported from the private repository at $SRC_COMMIT with a fresh history. The
-history was not filtered: it is new, so the published tree has never contained
-Oracle's non-redistributable JDBC driver or any live host or credential."
+The public history is one commit per export, not a replay of private commits: replaying
+would mean filtering every one, and would publish commit messages that name schemas this
+repository deliberately excludes."
+    else
+        SUBJECT="Initial public release"
+        BODY="MCPDBWizard: an Oracle PL/SQL introspector and Java code generator that emits
+JDBC wrappers, and a Model Context Protocol server exposing them as typed agent tools.
+
+Exported from the development repository at $SRC_COMMIT with a fresh history. The history
+was not filtered: it is new, so the published tree has never contained Oracle's
+non-redistributable JDBC driver, any live host, or any credential."
+    fi
+    git -c user.name="${GIT_AUTHOR_NAME:-$(git -C "$REPO_ROOT" config user.name)}" \
+        -c user.email="${GIT_AUTHOR_EMAIL:-$(git -C "$REPO_ROOT" config user.email)}" \
+        commit -q -m "$SUBJECT" -m "$BODY" || exit 1
+    echo "  committed: $SUBJECT ($CHANGED file(s))"
+    PUBLISHED=committed
+fi
 
 # ---- 6. report -------------------------------------------------------------
 files=$(find "$DEST" -type f -not -path '*/.git/*' | wc -l | tr -d ' ')
 size=$(du -sh "$DEST" 2>/dev/null | cut -f1)
+commits=$(git -C "$DEST" rev-list --count HEAD 2>/dev/null || echo 0)
+ahead=$(git -C "$DEST" rev-list --count @{u}..HEAD 2>/dev/null || echo "$commits")
 
 echo
 echo "=================================================================="
-echo "  EXPORTED"
-echo "  from   : $SRC_COMMIT (private repo)"
-echo "  to     : $DEST"
-echo "  content: $files files, $size, 1 commit"
+echo "  STAGED  ($PUBLISHED)"
+echo "  from    : $SRC_COMMIT (development repo)"
+echo "  to      : $DEST"
+echo "  content : $files files, $size, $commits commit(s) total"
+echo "  unpushed: $ahead commit(s)"
 echo "=================================================================="
 echo
 echo "  Excluded (see Scripts/export/exclude.txt):"
 sed -n 's/^\([^#][^ ]*\)$/    \1/p' "$SCRIPT_DIR/exclude.txt" | grep -v '^ *$'
+
+if [ "$PUBLISHED" = unchanged ]; then
+    echo
+    echo "  Nothing to push."
+    exit 0
+fi
+
 echo
-echo "  Before publishing:"
-echo "    1. read README.md as a newcomer would"
-echo "    2. confirm the DDL really is absent:"
-echo "         ls sql OtherDbs            # both should say: No such file or directory"
-echo "    3. push:"
+echo "  NOT PUSHED. Review, then:"
 echo "         cd $DEST"
-echo "         git remote add origin $PUBLIC_REPO"
-echo "         git branch -M main && git push -u origin main"
+echo "         git log -1 --stat        # what this export changes"
+echo "         git push"
 echo
-echo "  NOTE: the first push to an EXISTING repository that already has commits will be"
-echo "  refused. This export has a fresh history by design and cannot be merged with one --"
-echo "  push --force is the only way to reconcile them, and it discards whatever is there."
+echo "  This is an ordinary fast-forward onto the published history -- no --force, and"
+echo "  anyone who forked or opened a pull request is unaffected. If a push is ever"
+echo "  REFUSED as non-fast-forward, someone committed to the public repo directly:"
+echo "  pull, look at what they did, and re-run this rather than forcing over it."

@@ -45,6 +45,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <main.class>com.mcpdbwizard.app.procbuilder.gui.ProcBuilder</main.class>
         <junit.version>5.10.2</junit.version>
+        <gson.version>2.13.2</gson.version>
         <slf4j.version>2.0.16</slf4j.version>
         <log4j2.version>2.24.3</log4j2.version>
     </properties>
@@ -77,6 +78,28 @@
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
             <version>${slf4j.version}</version>
+            <optional>true</optional>
+        </dependency>
+
+        <!--
+          Gson: needed to COMPILE the code the JSON / JSON-RPC connector generator emits
+          (XWS_TYPE=JSON or JSONRPC). The emitted JsonImpl imports com.google.gson.* and uses it
+          heavily; nothing in this project imports Gson itself.
+
+          IT WAS NEVER DECLARED, so the connector configs could not compile from this project's
+          own dependencies; they relied on a jar reaching the classpath by some other route. That
+          surfaced on 2026-08-20 as four configs failing with "package com.google.gson does not
+          exist", which blocked the estate's TEST PHASE on every box, because a compile failure
+          exits non-zero and the driver gates on that exit code.
+
+          Optional for the same reason as the logging backends above: it is an emission target, so
+          only applications that generate a JSON connector need it. It is not on the runtime path
+          of a generated DAO layer.
+        -->
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+            <version>${gson.version}</version>
             <optional>true</optional>
         </dependency>
 
