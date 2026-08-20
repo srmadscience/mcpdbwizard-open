@@ -107,7 +107,7 @@ fi
 # generation, so it read as a total generator collapse rather than a missing variable.
 
 # --- paths ------------------------------------------------------------------
-JAR=$HOMEDIR/target/mcpdbwizard-app-2.0.0-SNAPSHOT-shaded.jar
+. "$SCRIPT_DIR/find-shaded-jar.sh"   # sets JAR; version-agnostic on purpose
 SQLDIR=$HOMEDIR/Sqlfiles
 # PER-PROPFILE SQL DIRECTORIES. Every config used to be pointed at the ONE library above, which
 # flattened configs that were authored against several directories: a config naming a statement the

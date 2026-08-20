@@ -29,7 +29,7 @@ set -u
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 HOMEDIR=$(cd "$SCRIPT_DIR/.." && pwd)
 
-JAR=$HOMEDIR/target/mcpdbwizard-app-2.0.0-SNAPSHOT-shaded.jar
+. "$SCRIPT_DIR/find-shaded-jar.sh"   # sets JAR; version-agnostic on purpose
 SRC=$SCRIPT_DIR/provisioning/CheckProvisioning.java
 JAVA=${JAVA:-java}
 

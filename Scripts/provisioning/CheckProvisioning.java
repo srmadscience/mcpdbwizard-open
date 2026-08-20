@@ -221,23 +221,61 @@ public class CheckProvisioning {
      * Scripts/server_bfile_setup.sh), so a wrong size here still produces a working fixture.
      * Sizes are carried anyway so a repaired file matches what the script would have written.
      */
+    /**
+     * The three Oracle DIRECTORY objects holding the BFILE fixtures, comma-separated, from
+     * MCPDBWIZARD_BFILE_DIRS. Empty when unset, which makes the whole BFILE check skip.
+     *
+     * <p>NOT HARDCODED, for two reasons that pull the same way. These names are a property of how
+     * a particular box was provisioned, not of this program; and this file ships in the
+     * open-source export, where a schema name has no business being. Set it in Scripts/boxes.env
+     * beside the host inventory.
+     *
+     * <p>This used to be a literal, and on 2026-08-20 a rename pass replaced the schema name in it
+     * with a pseudonym -- editing a live SQL predicate while intending to edit prose. The query
+     * then matched nothing, so the check reported SKIPPED on every box and the ORA-22288 cascade
+     * guard was inert through an entire six-box estate run without one failure to show for it.
+     * A check that can only say "fine" is worse than none.
+     */
+    private static final String[] BFILE_DIRS = bfileDirs();
+
+    private static String[] bfileDirs() {
+        String raw = System.getenv("MCPDBWIZARD_BFILE_DIRS");
+        if (raw == null || raw.trim().isEmpty()) {
+            return new String[0];
+        }
+        String[] parts = raw.split(",");
+        List<String> out = new ArrayList<String>();
+        for (String part : parts) {
+            String t = part.trim();
+            if (!t.isEmpty()) {
+                out.add(t.toUpperCase());
+            }
+        }
+        // Three, in order: the two the main fixture schema owns, then the byte-test schema's.
+        // Anything else is a misconfiguration, and guessing which is which would be worse.
+        return out.size() == 3 ? out.toArray(new String[0]) : new String[0];
+    }
+
     private static final String[][] BFILES = buildBfileInventory();
 
     private static String[][] buildBfileInventory() {
+        if (BFILE_DIRS.length != 3) {
+            return new String[0][];
+        }
         String[] dates = {
             "152502", "152541", "152551", "152601", "152612", "152622", "152632", "152642",
             "152652", "152702", "152712", "152722", "152733", "152743", "152753", "152803",
             "152813", "152824", "152835", "152846"
         };
         List<String[]> out = new ArrayList<String[]>();
-        out.add(new String[] {"APPSCHEMA_TESTDIR1", "test_readable", "1024"});
-        out.add(new String[] {"APPSCHEMA_TESTDIR1", "test_unreadable", "1024"});
-        out.add(new String[] {"APPSCHEMA_TESTDIR1", "nterdesk.dmp", "10485760"});
-        out.add(new String[] {"APPSCHEMA_TESTDIR1", "nterdesk.dmp.Z", "2097152"});
+        out.add(new String[] {BFILE_DIRS[0], "test_readable", "1024"});
+        out.add(new String[] {BFILE_DIRS[0], "test_unreadable", "1024"});
+        out.add(new String[] {BFILE_DIRS[0], "nterdesk.dmp", "10485760"});
+        out.add(new String[] {BFILE_DIRS[0], "nterdesk.dmp.Z", "2097152"});
         for (String d : dates) {
-            out.add(new String[] {"APPSCHEMA_TESTDIR2", "date." + d, "512"});
+            out.add(new String[] {BFILE_DIRS[1], "date." + d, "512"});
         }
-        out.add(new String[] {"BYTETEST_TESTDIR1", "GenericFile.txt", "256"});
+        out.add(new String[] {BFILE_DIRS[2], "GenericFile.txt", "256"});
         return out.toArray(new String[0][]);
     }
 
@@ -276,9 +314,15 @@ public class CheckProvisioning {
         }
 
         try {
+            if (BFILE_DIRS.length != 3) {
+                System.out.println("  BFILE test files: MCPDBWIZARD_BFILE_DIRS not set to three"
+                        + " directory names -- SKIPPED (see Scripts/boxes.env.template)");
+                return 0;
+            }
             if (!directoriesExist(c)) {
-                System.out.println("  BFILE test files: APPSCHEMA_TESTDIR1/2 + BYTETEST_TESTDIR1 not all"
-                        + " present -- SKIPPED (box not provisioned, or provisioned without them)");
+                System.out.println("  BFILE test files: " + String.join(", ", BFILE_DIRS)
+                        + " not all present -- SKIPPED (box not provisioned, or provisioned"
+                        + " without them)");
                 return 0;
             }
 
@@ -328,9 +372,14 @@ public class CheckProvisioning {
     /** All three directory objects visible? If not, this box does not use the UTL_FILE fixture path. */
     private static boolean directoriesExist(Connection c) throws Exception {
         String sql = "select count(distinct directory_name) from all_directories"
-                + " where directory_name in ('APPSCHEMA_TESTDIR1','APPSCHEMA_TESTDIR2','BYTETEST_TESTDIR1')";
-        try (PreparedStatement s = c.prepareStatement(sql); ResultSet rs = s.executeQuery()) {
-            return rs.next() && rs.getInt(1) == 3;
+                + " where directory_name in (?,?,?)";
+        try (PreparedStatement s = c.prepareStatement(sql)) {
+            for (int i = 0; i < 3; i++) {
+                s.setString(i + 1, BFILE_DIRS[i]);
+            }
+            try (ResultSet rs = s.executeQuery()) {
+                return rs.next() && rs.getInt(1) == 3;
+            }
         }
     }
 

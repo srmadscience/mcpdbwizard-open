@@ -29,13 +29,13 @@ mvn compile                # compile only
 
 `package` produces two artifacts:
 - `target/mcpdbwizard-app.jar` — plain jar (manifest main class set, but needs ojdbc5 on the classpath)
-- `target/mcpdbwizard-app-2.0.0-SNAPSHOT-shaded.jar` — self-contained runnable jar with the Oracle driver bundled
+- `target/mcpdbwizard-app-2.0.0-shaded.jar` — self-contained runnable jar with the Oracle driver bundled
 
 Run the application (entry point `com.mcpdbwizard.app.procbuilder.gui.ProcBuilder`):
 
 ```bash
 # Interactive (Swing) mode:
-java -jar target/mcpdbwizard-app-2.0.0-SNAPSHOT-shaded.jar <log_dir> <config>.pb2
+java -jar target/mcpdbwizard-app-2.0.0-shaded.jar <log_dir> <config>.pb2
 # Batch mode:
 java -jar target/...-shaded.jar <log_dir> build <config>.pb2
 ```
