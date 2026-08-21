@@ -1,62 +1,84 @@
-# Let a TZ index-by table cross MCP — plan
+# Index-by tables crossing MCP: the TZ gate (done) and DATE/RAW (open)
 
-> **DONE for TZ, 2026-08-21, except the estate run.** `generic_testd_mcp` went 28 -> 30 tools,
-> gaining `iba_test_test_timestamp_tz` and `…_ltz`; the diff is additions only and the tree compiles
-> (129 classes). Db-free suites green: app 850/0/0, web 398/0/0.
+> **TZ: DONE 2026-08-21, six boxes green.** `generic_testd_mcp` went 28 → 30 tools, gaining
+> `iba_test_test_timestamp_tz` and `…_ltz`; additions only, tree compiles, db-free suites app
+> 850/0/0 and web 398/0/0, estate green on all six boxes with no propfile below its floor.
 >
-> **THREE CLAIMS IN THIS PLAN WERE WRONG, and the first one mattered.**
+> **DATE and RAW: still gated, and this document is now mostly about them.** See
+> "What remains" — the analysis there is the reason they were NOT folded in.
 >
-> 1. **"TZ crosses as text with no new emitted code."** It does not. The emitted mask is
->    `'yyyy-mm-dd hh24:mi:ss.ff9 TZR'` — a SPACE between date and time — while MCP crosses dates as
->    ISO with a `T`. Measured: `to_timestamp_tz('2019-03-01T14:25:36.0+05:30', <that mask>)` raises
->    **ORA-01858**. So TZ needed exactly the mask conversion this plan said only DATE needed. It is
->    `McpDates.toOracleTimestampText` / `fromOracleTimestampText`, a textual `T`↔space swap —
->    deliberately NOT a parse-and-reformat, which would resolve the value to an instant and re-render
->    the caller's `+05:30` in the server's zone. The separator before the ZONE turns out to be
->    flexible, which is why only the one character moves.
-> 2. **"`TGen23aiMcp` asserts an exact tool-list count and will need updating."** It asserts
->    `tools.size() > 18`, a lower bound, and its fixture has SCALAR TZ params rather than index-by
->    collections — so it is untouched.
-> 3. Phase 0 proposed extending the 23ai fixture. Unnecessary: `generic_testd` already has
->    `IBA_TEST.TEST_TIMESTAMP_TZ` and `…_LTZ`, so its `_mcp` sibling gives a before/after for free.
->
-> **A trap this hit, documented in the sibling plan and walked into anyway:** the first version of
-> the description quoted its examples, and `.description(...)` does not escape — the generated file
-> came out with bare double quotes inside a string literal and would not have compiled. Caught by
-> reading the emitted line, not by the tool count, which was correct throughout.
->
-> **DATE and RAW remain gated**, but the refusal now names the real obstacle per kind instead of
-> blaming `PlsqlIndexByTable2` for a stringification that no longer happens.
+> **This file was a forward plan and three of its claims were wrong.** The wrong parts are kept,
+> marked, because the first would otherwise be re-derived by whoever picks up DATE and RAW — it is
+> the same trap waiting in the same place.
 
-## What is gated, and why the reason has retired
+## What was gated, and why the reason retired
 
-`mcpProcUnsupportedReason` skips a whole PL/SQL routine when any index-by parameter's element is not
-NUMBER or VARCHAR2:
+`mcpProcUnsupportedReason` skips a routine when an index-by parameter's element is not crossable.
+**The gate is per ROUTINE, not per parameter**: one such argument hid every tool for that routine —
+no error, no partial exposure, the routine simply absent from `tools/list`. That is why a niche type
+mattered more than it looked.
 
-```java
-return "parameter " + argName + " is an index-by table of " + elementKind
-        + " (only NUMBER and VARCHAR2 elements cross)";
-```
+The refusal used to read *"only NUMBER and VARCHAR2 elements cross"*, because `PlsqlIndexByTable2`
+is deliberately binary and would **silently stringify** a date — returning something the caller never
+sent. That was a sound reason to refuse.
 
-The stated reason is that `PlsqlIndexByTable2` is "deliberately binary", so a date or raw element
-"would be silently stringified and come back as something the caller did not put in".
-
-**That was true and no longer is.** The TZ binding fix gave the DAO path `TO_TIMESTAMP_TZ` with a
-`TZR` mask in both directions, an 80-character shuttle and `ensureFractionalSeconds`, verified live
-on 12c and 23ai preserving both `+05:30` and `Asia/Calcutta`. The stringification the gate exists to
-prevent does not happen any more.
+**The TZ binding fix removed it.** The DAO path now converts with `TO_TIMESTAMP_TZ` and a `TZR` mask
+in both directions, verified live on 12c and 23ai preserving `+05:30` and `Asia/Calcutta`. The
+stringification the gate existed to prevent no longer happens.
 
 **Nothing regressed when that landed** — a zoned element classified as unsupported before the fix
-(`java.sql.Timestamp`) and still does after it (`oracle.sql.TIMESTAMPTZ`), so the MCP surface never
-moved and the six-box estate stayed green. This is a gate that is now *unnecessary*, not one that is
-newly wrong.
+(`java.sql.Timestamp`) and still did after it (`oracle.sql.TIMESTAMPTZ`). The gate had become
+*unnecessary*, not newly wrong.
 
-## TZ is nearly free, because the wrapper already does the work
+## What TZ actually needed
 
-**The MCP path drives the generated wrapper directly** — it sets parameters and calls
-`executeProc()`, so the wrapper's own `bindParams` runs. That is where `setDataType(TIMESTAMPTZ)`,
-`setElementMaxLength(80)` and `ensureFractionalSeconds()` already happen. The MCP layer does not need
-to reproduce any of it; it only has to hand over a `PlsqlIndexByTable2` holding strings.
+> **The section that stood here claimed "TZ is nearly free — no new emitted code is needed at all".
+> That was WRONG, and it is the correction that matters most to anyone reading this for DATE.**
+
+The claim was that a zoned element could reuse the `string` element kind and cross verbatim, because
+the wrapper's own `bindParams` already applies `setDataType(TIMESTAMPTZ)`, the 80-character element
+length and `ensureFractionalSeconds()`. **That part is true and is why this was still cheap.**
+
+What it missed: **the emitted mask and the MCP wire format disagree about one character.**
+
+```sql
+-- the generated PL/SQL converts a zoned element with:
+'yyyy-mm-dd hh24:mi:ss.ff9 TZR'          -- a SPACE between date and time
+-- MCP crosses dates as ISO-8601:
+'2019-03-01T14:25:36.0+05:30'            -- a T
+```
+
+Measured on both Oracle lines:
+
+```
+to_timestamp_tz('2019-03-01T14:25:36.0+05:30', 'yyyy-mm-dd hh24:mi:ss.ff9 TZR')
+  -> ORA-01858: a non-numeric character was found
+```
+
+So TZ needed exactly the mask conversion this document said only DATE needed. It is
+`McpDates.toOracleTimestampText` / `fromOracleTimestampText`, a **textual `T`↔space swap** —
+deliberately not a parse-and-reformat, because parsing yields an instant and re-rendering it would
+put the caller's `+05:30` back in the *server's* zone, which is the defect this whole area was fixed
+for. Only the character at index 10 moves, so a `T` inside a region name (`US/Eastern`,
+`America/Port_of_Spain`) is left alone.
+
+The separator before the **zone** turns out to be flexible — offset or region, with or without a
+space, all accepted — which is why one character is the whole difference.
+
+**What shipped:**
+
+| | |
+|---|---|
+| `mcpCollectionElementKind` | `oracle.sql.TIMESTAMPTZ` / `TIMESTAMPLTZ` → new kind **`timestamptz`** |
+| `mcpIndexByTypeCode` | `timestamptz` → `OracleTypes.VARCHAR` |
+| `toScalarObjectArray` | IN: `McpDates.toOracleTimestampText` |
+| `collectionToJson` | OUT: `fromOracleTimestampText`; **gained a `theKind` parameter** |
+| `mcpCollectionLabel` | the caller-facing description |
+
+Note the last two. The OUT helper had no idea what kind of collection it held, so it could not have
+converted anything — "the OUT direction needs nothing" was wrong for the same reason as the rest.
+
+### Why not reuse the `date` element kind
 
 Measured, on the real class:
 
@@ -67,100 +89,98 @@ new PlsqlIndexByTable2(OracleTypes.VARCHAR, 0)
                                                      Cannot format given Object as a Number
 ```
 
-So **crossing as text works and crossing as `java.util.Date` does not** — which is the whole shape of
-this change, and the reason DATE is harder than TZ rather than easier.
+The `date` kind produces `java.util.Date` objects, which is precisely what throws. **Reusing it
+would have looked right and failed at run time.** This is the single most important fact for the
+DATE work below.
 
-The OUT direction needs nothing: `collectionToJson` reads `getCurrentValuesAsObject()`, which for a
-VARCHAR-backed table is the `String[]` the database put there, already in the `TZR` form.
+## The description, and the trap in writing it
 
-**So the TZ half is two mappings and a description:**
-
-| | |
-|---|---|
-| `mcpCollectionElementKind` | map `oracle.sql.TIMESTAMPTZ` / `TIMESTAMPLTZ` to element kind `string` |
-| `mcpIndexByTypeCode` | return `OracleTypes.VARCHAR` for it |
-| the tool description | say which forms are accepted — see below |
-
-Reusing `string` rather than inventing a kind is deliberate: `toScalarObjectArray`'s `else` branch
-already does `String.valueOf`, and `collectionToJson` already passes strings through, so **no new
-emitted code is needed at all**. That is the same economy the SOAP side turned out to have.
-
-## The description is the part that must not be skimped
-
-This is the defect the live MCP report found in the DATE crossing, and it applies here with more
-force: a zoned timestamp has *more* accepted spellings, not fewer. The parameter's description must
-name them, in the way `McpDates`' message now does:
+The live MCP report that started all this was, at bottom, a **description** defect: the schema said
+"ISO-8601 string", the caller sent `1990-01-01`, and it was refused. A zoned timestamp has more
+accepted spellings, not fewer, so the description has to carry them. What is emitted:
 
 ```
-p_in (TIMESTAMP WITH TIME ZONE index-by table, array of ISO-8601 strings,
-      e.g. "2019-03-01T14:25:36+05:30" or "2019-03-01T14:25:36 Asia/Calcutta")
+p_in (array of ISO-8601 timestamps with a zone, e.g. 2019-03-01T14:25:36+05:30 or
+      2019-03-01T14:25:36 Asia/Calcutta (a LOCAL timestamp is returned in the server's time zone))
 ```
 
-**And a LOCAL timestamp needs a sentence of its own.** It keeps no zone — it is normalised to the
-server's — so a value comes back rendered in the *server's* zone, not the caller's. A model given an
-array of `+05:30` values and handed back `GMT` ones will otherwise conclude the call failed.
+**The LOCAL clause is not padding.** A `TIMESTAMP WITH LOCAL TIME ZONE` keeps no zone of its own, so
+values come back rendered in the *server's*. An agent that sent `+05:30` and reads back `GMT` would
+otherwise reasonably conclude the call failed.
 
-## DATE and RAW are the same gate and NOT the same job
+> **NO DOUBLE QUOTES IN THAT TEXT, and the first draft had them.** It is printed straight into an
+> emitted `.description("…")` literal and **that emission does not escape** — everything else
+> reaching it is plain prose. Quoting the examples produced a generated file with bare quotes inside
+> a string literal, which does not compile. It was caught by reading the emitted line; the tool
+> count was correct throughout, so nothing else would have shown it.
 
-Do not fold them in on the grounds that the gate is shared.
+## The decision — TAKEN: expose it
 
-**DATE has a mask mismatch.** The DAO's DATE index-by converts with
-`ORACLE_DATE_TO_CHAR_MASK = "yyyy-mm-dd hh24:mi:ss"` — a space, no `T`. MCP crosses dates as
-ISO-8601 with a `T`. So a DATE index-by cannot simply cross as text the way TZ can: either the
-crossing converts ISO to the Oracle mask on the way in and back on the way out, or the emitted
-PL/SQL learns the ISO mask. **And the existing `date` element kind is actively wrong here** — it
-produces `java.util.Date` objects, which is precisely what throws.
-
-**RAW has an encoding mismatch.** MCP crosses RAW as base64; `PlsqlIndexByTable2` carries it as hex
-(`getArrayAsRaw` parses hex pairs). Crossing needs a base64↔hex conversion, which is small but is
-real emitted code.
-
-Both are worth doing and neither is this change.
-
-## The decision this actually needs
-
-**Should an agent be handed a zoned collection at all?** The mechanism now works; that is not the
+**Should an agent be handed a zoned collection at all?** The mechanism works; that was never the
 question. The DAO path is driven by a developer who has read the parameter. MCP hands it to a model
 that will emit whatever ISO-ish string it likes, and a zone that *converts* silently is a different
 risk from one that fails loudly.
 
-Two honest positions:
+*Decided: expose it.* The product goal is to call any PL/SQL routine whatever its inputs, and a
+routine being invisible **in its entirety** because of one parameter is a bigger surprise than a
+fiddly type — especially now the conversion is correct and the description says so.
 
-- **Expose it.** The product goal is to call any PL/SQL routine whatever its inputs. A routine is
-  currently invisible in its entirety because of one parameter, which is a bigger surprise than a
-  fiddly type — and the conversion is now correct and documented.
-- **Leave it gated, and say so.** Change the refusal to name the real reason rather than the retired
-  one, so the next person does not re-derive this whole analysis from a message that is no longer
-  true.
+The alternative — leave it gated but fix the message — was done **as well**, for the kinds that are
+still gated. Even a gate that stays should not cite a defect that has been fixed.
 
-**The second is strictly better than today whatever is decided about the first**, and costs one
-string. Even if the gate stays, the message should not keep claiming a defect that has been fixed.
+## What remains: DATE and RAW
 
-## Phases
+Same gate, genuinely different jobs. **Do not fold them in on the grounds that the gate is shared.**
 
-**Phase 0 — a red test.** `TGen23aiMcp` drives a real server; the fixture package would need a TZ
-index-by routine (`sql/datatypes_23ai_gen.sql`). Assert the tool EXISTS, then round-trip `+05:30`
-and a region name and require them back intact. Expect red on "tool exists" today.
+**DATE** carries both problems at once:
 
-**Phase 1 — the two mappings**, as above.
+- the same mask mismatch — `ORACLE_DATE_TO_CHAR_MASK` is `"yyyy-mm-dd hh24:mi:ss"`, a space, no `T`;
+- **and** the `java.util.Date` problem above, because the existing `date` element kind is what
+  produces the object `setArray` refuses.
 
-**Phase 2 — the description**, including the LTZ sentence.
+So it needs its own text conversion *and* a decision about whether the `date` kind changes shape or
+a new kind appears beside it. Changing `date` affects generated VARRAY and nested-table collections,
+which accept `java.util.Date` happily today — so a new kind is likely the smaller change.
 
-**Phase 3 — verify.** This adds tools to any config with such a routine, so **file counts move and
-tool counts move**: `TGen23aiMcp` asserts an exact tool-list count and will need updating, which is
-the signal that the surface really did widen. Then the six-box estate, because it changes emitted
-output for every `MCP_SERVER=YES` config that has one.
+**RAW** is an encoding mismatch: MCP crosses binary as base64, `PlsqlIndexByTable2` carries hex
+(`getArrayAsRaw` parses hex pairs). Small, but real emitted code both ways.
 
-**Phase 4 — decide DATE and RAW separately**, with the mask and encoding work above priced in.
+The refusal now names these rather than the retired reason:
+
+```java
+String theObstacle = "raw".equals(elementKind)
+        ? "MCP crosses binary as base64 and an index-by table carries it as hex"
+        : "the generated conversion uses a space-separated Oracle mask, not the ISO form MCP
+           crosses dates in";
+```
+
+### Phases for that work
+
+1. **Red test first.** `generic_testd` already has `IBA_TEST.TEST_DATE` and `TEST_RAW`, so its
+   `_mcp` sibling gives a before/after with **no fixture change** — assert the tool exists, then
+   round-trip a value. (The original plan proposed extending the 23ai fixture; that was
+   unnecessary, and it will be unnecessary again.)
+2. **A new element kind per type**, not a reshaped `date`.
+3. **The conversion**, in `McpDates` (or a sibling for RAW) where it can be unit-tested — the
+   emitter cannot test itself, which is why the date logic moved to the runtime library at all.
+4. **The description**, naming the accepted form. Plain prose, no quotes.
+5. **Verify**: db-free suites, then the six-box estate, because it changes emitted output for every
+   `MCP_SERVER=YES` config that has such a routine.
 
 ## Traps
 
-- **The gate is per ROUTINE, not per parameter.** One unsupported parameter hides every tool for that
-  routine, which is why this is worth more than it looks.
-- **`mcpIndexByTypeCode` returning null is what triggers the refusal**, not the element kind being
-  null — a kind that maps to no type code fails the same way, silently, one branch later.
-- **Do not give `PlsqlIndexByTable2` a `java.util.Date`.** Measured above. The existing `date`
-  element kind does exactly that, so reusing it for TZ would look right and throw at run time.
+- **The gate is per ROUTINE, not per parameter.** One unsupported argument hides every tool for that
+  routine.
+- **Two branches refuse, not one.** A null element kind refuses at the first check;
+  a kind that maps to no `mcpIndexByTypeCode` refuses one branch later, with a different message.
+  Adding a kind without adding its type code fails quietly in the second place.
+- **Never hand `PlsqlIndexByTable2` a `java.util.Date`** — measured above.
+- **`.description(...)` does not escape.** Plain prose only.
+- **`TGen23aiMcp` asserts `tools.size() > 18`**, a lower bound — it does not need updating when the
+  surface widens, and its fixture has *scalar* TZ params rather than index-by ones. The original
+  plan claimed the opposite on both counts.
+- **Measure the mask, do not reason about it.** Every wrong claim in this document came from
+  reasoning about formats that a single `to_timestamp_tz` call would have settled in seconds.
 
 Copyright 2003-2026 ATB Consultancy Services Ltd
 (formerly Orinda Software Ltd, Dublin, Ireland)
