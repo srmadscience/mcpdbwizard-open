@@ -22,8 +22,12 @@ class McpParamTypeLabelTest {
     void aCrossingFormatIsSpeltOutWhereItIsNotObvious() {
         // The whole point: "RAW" does not tell a caller to send base64, and "DATE" does not tell
         // them the format.
+        //
+        // "ISO-8601 string" was the wording until 2026-08-20, and it was not enough: a caller sent
+        // 1990-01-01 -- which IS ISO-8601 -- and got "Unparseable date" back, because only one
+        // profile was ever accepted and nothing said which. Naming a form beats naming a standard.
         assertEquals("RAW, base64", SAAdminWrangler.mcpParamTypeLabel("RAW", "byte[]"));
-        assertEquals("DATE, ISO-8601 string",
+        assertEquals("DATE, ISO-8601 date, e.g. 1990-01-01 or 1990-01-01T09:30:00Z",
                 SAAdminWrangler.mcpParamTypeLabel("DATE", "java.util.Date"));
         // ...but a note the Oracle name already carries is suppressed: "JSON, JSON value" is
         // noise where "RAW, base64" is the whole point.
@@ -56,7 +60,8 @@ class McpParamTypeLabelTest {
         // Synthesised entries can arrive without a raw type name. The crossing note is still worth
         // more than a Java class name; with neither, the Java type is better than an empty string.
         assertEquals("base64", SAAdminWrangler.mcpParamTypeLabel("", "byte[]"));
-        assertEquals("ISO-8601 string", SAAdminWrangler.mcpParamTypeLabel(null, "java.util.Date"));
+        assertEquals("ISO-8601 date, e.g. 1990-01-01 or 1990-01-01T09:30:00Z",
+                SAAdminWrangler.mcpParamTypeLabel(null, "java.util.Date"));
         assertEquals("String", SAAdminWrangler.mcpParamTypeLabel("", "String"));
         // With no dictionary name the JSON note is all there is, and it still beats the class name.
         assertEquals("JSON value",

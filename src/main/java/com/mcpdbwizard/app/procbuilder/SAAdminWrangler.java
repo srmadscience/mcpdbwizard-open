@@ -1454,6 +1454,7 @@ public class SAAdminWrangler extends SADbWrangler {
             , boolean mcpHttpsFlag
             , boolean mcpOAuthFlag
             , boolean prometheusServerFlag
+            , String mcpInstructions
             , boolean webServicesBfilesAreAbstractFlag
             , boolean finalizeMethodFlag
             , boolean servicePreCallStubFlag
@@ -2989,6 +2990,7 @@ public class SAAdminWrangler extends SADbWrangler {
                                     , mcpHttpsFlag
                                     , mcpOAuthFlag
                                     , prometheusServerFlag
+                                    , mcpInstructions
                                     , extraSqlCheckBox
                                     , poolSettings);
                 }
@@ -4733,6 +4735,7 @@ public class SAAdminWrangler extends SADbWrangler {
                     , boolean mcpHttpsFlag
                     , boolean mcpOAuthFlag
                     , boolean prometheusServerFlag
+                    , String mcpInstructions
                     , boolean extraSqlCheckBox
                     , DaoPoolSettings poolSettings) {
 
@@ -5160,11 +5163,12 @@ public class SAAdminWrangler extends SADbWrangler {
         //
         // Both settings are needed. The pattern alone would drop the Z and keep rendering in UTC,
         // which is the worse outcome: still an hour out, now with nothing marking it.
-        // The pattern is INLINED, not the ISO_DATE_PATTERN constant: that constant is emitted
-        // later in the class (so referencing it here is an illegal forward reference in a static
-        // initializer) and only when the config has functions, tables or SQL statements. Keep the
-        // two literals in step -- ISO_DATE_PATTERN below must stay "yyyy-MM-dd'T'HH:mm:ss".
-        theJavaCode.print("        .defaultDateFormat(new java.text.SimpleDateFormat(\"yyyy-MM-dd'T'HH:mm:ss\"))");
+        // This used to inline the literal and carry a comment asking whoever edited one copy to
+        // remember the other, because the emitted constant sat later in the class and referencing
+        // it from a static initializer is an illegal forward reference. A LIBRARY constant is not:
+        // com.mcpdbwizard.pub.McpDates.ISO_PATTERN is the same value the helpers below use, so the
+        // two can no longer drift apart and there is nothing left to keep in step by hand.
+        theJavaCode.print("        .defaultDateFormat(new java.text.SimpleDateFormat(com.mcpdbwizard.pub.McpDates.ISO_PATTERN))");
         theJavaCode.print("        .defaultTimeZone(java.util.TimeZone.getDefault())");
         theJavaCode.print("        .build();");
         if (comments) {
@@ -5195,6 +5199,21 @@ public class SAAdminWrangler extends SADbWrangler {
         // ---- main ----------------------------------------------------------
 
         String instructionsText = "";
+
+        // The author's own words go FIRST -- a model reads instructions top-down, and this is
+        // the part the generator cannot know: what the schema is for, how the objects relate,
+        // and what not to attempt. The generated inventory still follows, so a config that
+        // never set MCP_INSTRUCTIONS emits a byte-identical server.
+        //
+        // ESCAPED HERE, and note the generated clauses below are NOT: they are built inline
+        // with their own quotes already escaped ({\"executed\":true}), so this is the only
+        // text on this line that has not been through a Java-literal escape. Newlines are
+        // refused upstream at the form, because javaStringLiteral does not handle them and a
+        // raw one fails as a compile error across the whole generated tree.
+        if (mcpInstructions != null && mcpInstructions.trim().length() > 0) {
+            instructionsText = javaStringLiteral(mcpInstructions.trim()) + " ";
+        }
+
         if (mcpViewList.size() > 0) {
             instructionsText = "Document CRUD over JSON-relational duality view(s) "
                     + viewNameListing + ". Documents carry a server-maintained _id and _metadata.etag; "
@@ -6039,19 +6058,25 @@ public class SAAdminWrangler extends SADbWrangler {
         if (haveFunctions || haveTables || haveSql) {
             theJavaCode.print("");
             if (comments) {
-                theJavaCode.print("// DATE/TIMESTAMP cross as an ISO-8601 date-time string (no zone)");
+                theJavaCode.print("// DATE/TIMESTAMP cross as ISO-8601 text. A bare date, a date-time, fractional");
+                theJavaCode.print("// seconds and a zone offset are all accepted; an offset is converted to this");
+                theJavaCode.print("// server's zone, since an Oracle DATE has nowhere to keep one. See McpDates.");
             }
-            theJavaCode.print("private static final String ISO_DATE_PATTERN = \"yyyy-MM-dd'T'HH:mm:ss\";");
+            // Both helpers are now one-line delegates to com.mcpdbwizard.pub.McpDates, and that is
+            // the point rather than tidiness. The logic they used to carry -- a lenient, zone-less
+            // SimpleDateFormat -- had five defects, four of them silent, and NONE of them could be
+            // unit-tested while the code existed only as text inside this emitter. In the runtime
+            // library it is covered by McpDatesTest, whose cases came back from a live session.
             theJavaCode.print("private static String formatIsoDate(java.util.Date theDate)");
             theJavaCode.indent();
             theJavaCode.print("{");
-            theJavaCode.print("return theDate == null ? null : new java.text.SimpleDateFormat(ISO_DATE_PATTERN).format(theDate);");
+            theJavaCode.print("return com.mcpdbwizard.pub.McpDates.formatAny(theDate);");
             theJavaCode.print("}");
             theJavaCode.unIndent();
             theJavaCode.print("private static java.util.Date parseIsoDate(Object theValue) throws Exception");
             theJavaCode.indent();
             theJavaCode.print("{");
-            theJavaCode.print("return theValue == null ? null : new java.text.SimpleDateFormat(ISO_DATE_PATTERN).parse(String.valueOf(theValue));");
+            theJavaCode.print("return com.mcpdbwizard.pub.McpDates.parse(theValue);");
             theJavaCode.print("}");
             theJavaCode.unIndent();
         }
@@ -6719,7 +6744,7 @@ public class SAAdminWrangler extends SADbWrangler {
             return "parseIsoDate(" + argExpr + ")";
         }
         if (javaType.equals("java.sql.Timestamp")) {
-            return "(" + argExpr + " == null ? null : new java.sql.Timestamp(parseIsoDate(" + argExpr + ").getTime()))";
+            return "com.mcpdbwizard.pub.McpDates.parseTimestamp(" + argExpr + ")";
         }
         if (javaType.equals("String") || javaType.equals("java.lang.String")) {
             return "(" + argExpr + " == null ? null : String.valueOf(" + argExpr + "))";
@@ -7058,7 +7083,10 @@ public class SAAdminWrangler extends SADbWrangler {
             return "base64";
         }
         if (theJavaType.equals("java.util.Date")) {
-            return "ISO-8601 string";
+            // NAME THE FORMS. "ISO-8601 string" is not a specification, and saying only that is how
+            // a caller sent 1990-01-01 -- which IS ISO-8601 -- and got "Unparseable date" back.
+            // This is the only guidance a caller ever sees, so it has to be the truth.
+            return "ISO-8601 date, e.g. 1990-01-01 or 1990-01-01T09:30:00Z";
         }
         if (theJavaType.equals("double[]")) {
             return "array of numbers";
@@ -7084,7 +7112,7 @@ public class SAAdminWrangler extends SADbWrangler {
         }
         switch (theWsType) {
             case "java.util.Date":
-                return "date, ISO-8601 string";
+                return "date, ISO-8601, e.g. 1990-01-01 or 1990-01-01T09:30:00Z";
             case "byte[]":
                 return "binary, base64";
             case "double":

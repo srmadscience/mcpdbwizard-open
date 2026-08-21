@@ -182,6 +182,14 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
      * server. Propfile and web GUI only -- there is deliberately no Swing control, exactly as for
      * {@link #mcpHttpTokenFlag} and {@link #mcpHttpsFlag}.
      */
+    /**
+     * MCP_INSTRUCTIONS: author-supplied text prepended to the generated server's MCP
+     * instructions. Propfile + web GUI, deliberately no Swing control, like MCP_HTTP_TOKEN
+     * and PROMETHEUS_SERVER. Held so a save PRESERVES it -- a scalar this class does not read
+     * is dropped on the next save, silently.
+     */
+    String mcpInstructions = null;
+
     boolean prometheusServerFlag = false;
     boolean webServicesBfilesAreAbstractFlag = false;
     boolean finalizeMethodFlag = false;
@@ -872,6 +880,11 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
             } else {
                 prometheusServerFlag = false;
             }
+
+            // Read as-is, with no default: null means the key was absent and empty means an
+            // author cleared it. Neither emits anything, so the distinction only keeps the
+            // round trip lossless.
+            mcpInstructions = fileProps.getProperty("MCP_INSTRUCTIONS");
 
             // WEB_SERVICES_ABSTRACT_BFILE is DELIBERATELY NOT READ. The option made the
             // generated ServiceImpl abstract, so callers supplied the BFILE upload naming
@@ -1617,6 +1630,12 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
             // Prometheus flag likewise has no Swing control; preserve it across a save.
             if (prometheusServerFlag) {
                 fileProps.setProperty("PROMETHEUS_SERVER", "YES");
+            }
+
+            // Likewise no Swing control. Written only when present, so a config that never
+            // set it does not gain an empty key on its first save.
+            if (mcpInstructions != null) {
+                fileProps.setProperty("MCP_INSTRUCTIONS", mcpInstructions);
             }
 
             fileProps.setProperty("HOSTNAME", pIpField.getText() + "");
@@ -2468,6 +2487,7 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
                                 mcpHttpsFlag,
                                 mcpOAuthFlag,
                                 prometheusServerFlag,
+                                mcpInstructions,
                                 webServicesBfilesAreAbstractFlag,
                                 finalizeMethodFlag,
                                 servicePreCallStubFlag,
@@ -2596,6 +2616,7 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
                                 mcpHttpsFlag,
                                 mcpOAuthFlag,
                                 prometheusServerFlag,
+                                mcpInstructions,
                                 webServicesBfilesAreAbstractFlag,
                                 finalizeMethodFlag,
                                 servicePreCallStubFlag,

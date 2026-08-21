@@ -89,6 +89,25 @@ public class Schema {
     private String mcpHttpToken;
     private String mcpHttps;
     private String mcpOAuth;
+
+    /**
+     * Author-supplied text prepended to the generated MCP server's {@code instructions}.
+     *
+     * <p>{@code instructions} is a top-level field on the MCP server -- NOT a member of
+     * {@code ServerCapabilities} -- returned in {@code InitializeResult}, and it is the first thing
+     * a model reads, before any tool. The generator already writes an inventory of what was exposed
+     * ("Exposes row CRUD on table(s) ..."), which is always accurate and always impersonal. This is
+     * the part only a person knows: what the schema is for, how the objects relate, and what an
+     * agent should not attempt even though a tool exists for it.
+     *
+     * <p><b>Prepended, never replacing.</b> The generated clauses still follow, so a config that
+     * never sets this emits a byte-identical server.
+     *
+     * <p>Null means absent and empty means nothing to prepend -- both emit the generated clauses
+     * alone. The difference is preserved only so a round trip stays lossless; it changes no output.
+     */
+    private String mcpInstructions;
+
     private String prometheusServer;
 
     /**
@@ -199,6 +218,7 @@ public class Schema {
             String mcpHttpToken,
             String mcpHttps,
             String mcpOAuth,
+            String mcpInstructions,
             String prometheusServer,
             String runOnStart,
             String metricsPort,
@@ -290,6 +310,7 @@ public class Schema {
         this.mcpHttpToken = mcpHttpToken;
         this.mcpHttps = mcpHttps;
         this.mcpOAuth = mcpOAuth;
+        this.mcpInstructions = mcpInstructions;
         this.prometheusServer = prometheusServer;
         this.runOnStart = runOnStart;
         this.metricsPort = metricsPort;
@@ -752,6 +773,16 @@ public class Schema {
         this.mcpOAuth = mcpOAuth;
     }
 
+    /** @see #mcpInstructions */
+    public String getMcpInstructions() {
+        return mcpInstructions;
+    }
+
+    /** @see #mcpInstructions */
+    public void setMcpInstructions(String mcpInstructions) {
+        this.mcpInstructions = mcpInstructions;
+    }
+
     public String getPrometheusServer() {
         return prometheusServer;
     }
@@ -1179,6 +1210,7 @@ public class Schema {
             "MCP_HTTP_TOKEN",
             "MCP_HTTPS",
             "MCP_OAUTH",
+            "MCP_INSTRUCTIONS",
             "PROMETHEUS_SERVER",
             "RUN_ON_START",
             "METRICS_PORT",
@@ -1268,6 +1300,7 @@ public class Schema {
         this.mcpHttpToken = props.getProperty("MCP_HTTP_TOKEN");
         this.mcpHttps = props.getProperty("MCP_HTTPS");
         this.mcpOAuth = props.getProperty("MCP_OAUTH");
+        this.mcpInstructions = props.getProperty("MCP_INSTRUCTIONS");
         this.prometheusServer = props.getProperty("PROMETHEUS_SERVER");
         this.runOnStart = props.getProperty("RUN_ON_START");
         this.metricsPort = props.getProperty("METRICS_PORT");
@@ -1467,6 +1500,7 @@ public class Schema {
         if (mcpHttpToken != null) { p.setProperty("MCP_HTTP_TOKEN", mcpHttpToken); }
         if (mcpHttps != null) { p.setProperty("MCP_HTTPS", mcpHttps); }
         if (mcpOAuth != null) { p.setProperty("MCP_OAUTH", mcpOAuth); }
+        if (mcpInstructions != null) { p.setProperty("MCP_INSTRUCTIONS", mcpInstructions); }
         if (prometheusServer != null) { p.setProperty("PROMETHEUS_SERVER", prometheusServer); }
         if (runOnStart != null) { p.setProperty("RUN_ON_START", runOnStart); }
         if (metricsPort != null) { p.setProperty("METRICS_PORT", metricsPort); }
@@ -1571,6 +1605,7 @@ public class Schema {
         m.put("mcpHttpToken", mcpHttpToken);
         m.put("mcpHttps", mcpHttps);
         m.put("mcpOAuth", mcpOAuth);
+        m.put("mcpInstructions", mcpInstructions);
         m.put("prometheusServer", prometheusServer);
         m.put("runOnStart", runOnStart);
         m.put("metricsPort", metricsPort);
@@ -1679,6 +1714,7 @@ public class Schema {
         this.mcpHttpToken = (String) m.get("mcpHttpToken");
         this.mcpHttps = (String) m.get("mcpHttps");
         this.mcpOAuth = (String) m.get("mcpOAuth");
+        this.mcpInstructions = (String) m.get("mcpInstructions");
         this.prometheusServer = (String) m.get("prometheusServer");
         this.runOnStart = (String) m.get("runOnStart");
         this.metricsPort = (String) m.get("metricsPort");
