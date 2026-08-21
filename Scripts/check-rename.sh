@@ -153,7 +153,11 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # above and makes the same point louder: the number is only as good as the habit of running the
 # script. It is now a phase of ./release.sh at the repository root, so a release run reports it
 # rather than relying on someone remembering.
-expect "copyright chain-of-title lines" 405 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-21: 405 -> 448. Growth only, from files added since -- McpDates and its test, the TZ
+# and date plan documents, bump-version.sh, the index-by work. Every one carries the notice
+# because it is ours. A RISE is the benign direction here and is ordinary maintenance; a FALL
+# would mean a file lost its notice, which is the thing this number exists to catch.
+expect "copyright chain-of-title lines" 448 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 
@@ -235,7 +239,15 @@ expect "Orinda* class identifiers" 0 \
 #
 # The number is asserted rather than left pending so a FIFTH cannot creep in unnoticed --
 # and so removing one of these is a decision rather than an accident.
-expect "deliberate OrindaBuild history notes" 4 "$(count 'OrindaBuild')"
+# 2026-08-21: 4 -> 7. THREE MORE, ALL IN THE SAME NEW PLACE and all deliberate: the FAQ page's
+# "backstory" answer, which tells the reader this began as OrindaBuild in 2003. That is a page
+# whose entire purpose is to say what the product used to be called, so it is the fifth, sixth
+# and seventh of exactly the kind this assertion permits rather than a rename that was missed.
+#
+# Note app/NOTICE is NOT among them despite the list above: it names "Orinda Software Ltd", the
+# company, not "OrindaBuild", the product. The four were README.txt x2, LogBackends.java and
+# LogBackendsTest.java.
+expect "deliberate OrindaBuild history notes" 7 "$(count 'OrindaBuild')"
 
 # Phase 3: artifact and jar names. NOT the same as the property keys (jdbcwizard.*,
 # JDBCWIZARD_*, mcpdbwizard_mcp_*), which are phase 5 and keep a compatibility alias --
