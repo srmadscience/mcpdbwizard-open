@@ -7211,6 +7211,52 @@ public class SAAdminWrangler extends SADbWrangler {
     }
 
     /**
+     * The generated description for one of a table's key/index lookup tools.
+     *
+     * <p>Extracted from the emission site so it can be unit-tested: a table's lookup tools are the
+     * one MCP surface where several tools on the SAME table differ only in their description, so a
+     * wording defect here is invisible in a tool count and shows up as an agent picking the wrong
+     * one.
+     *
+     * @param theKind             {@code uk}, {@code ix} or {@code fk}
+     * @param theParentOracleName the table the tool hangs off — the one being looked up BY
+     * @param theChildOracleName  FK only: the table the returned rows come FROM, schema-qualified;
+     *                            null falls back to the wording used before it was carried
+     * @param theConstraintName   the Oracle constraint or index name, which is also the description
+     *                            override KEY
+     * @param theKeySummary       the key columns, already rendered as {@code name (TYPE), ...}
+     * @param theSingle           true when the tool returns one row rather than an array
+     * @return the description, as plain prose — see the escaping note on {@link #mcpToolDescriptionLine}
+     */
+    static String mcpLookupDescription(String theKind, String theParentOracleName,
+                                       String theChildOracleName, String theConstraintName,
+                                       String theKeySummary, boolean theSingle) {
+        if ("fk".equals(theKind)) {
+            // Name the CHILD first: it is the table the returned rows come from, and on a parent
+            // with several children it is the only thing that tells the tools apart -- the
+            // constraint names are often Oracle's own (R_15, R_40), which mean nothing to a caller.
+            if (theChildOracleName != null && theChildOracleName.trim().length() > 0) {
+                return "Look up rows in table " + theChildOracleName.trim()
+                        + " that reference table " + theParentOracleName
+                        + " by foreign key " + theConstraintName + " (" + theKeySummary
+                        + "). Returns the child rows as a JSON array.";
+            }
+            // Not carried. Fall back rather than print a hole: the old wording is incomplete, but
+            // "table null" is worse than incomplete.
+            return "Look up the child rows referencing table " + theParentOracleName
+                    + " by foreign key " + theConstraintName + " (" + theKeySummary
+                    + "). Returns the child rows as a JSON array.";
+        }
+        String kindWord = "uk".equals(theKind) ? "unique key" : "index";
+        return "Look up " + (theSingle ? "the row" : "rows") + " in table "
+                + theParentOracleName + " by " + kindWord + " " + theConstraintName
+                + " (" + theKeySummary + "). "
+                + (theSingle
+                        ? "Returns the matching row as a JSON object, or {\\\"found\\\":false}."
+                        : "Returns the matching rows as a JSON array.");
+    }
+
+    /**
      * Report, in a form a program can read, that a config entry yields no MCP tool.
      *
      * <p><b>Why this exists as well as the prose line beside it.</b> A description an author writes
@@ -8250,20 +8296,8 @@ public class SAAdminWrangler extends SADbWrangler {
                         + mcpArgConversion(col.javaType, "req.arguments().get(\"" + col.jsonKey + "\")");
             }
 
-            String description;
-            if (lookup.kind.equals("fk")) {
-                description = "Look up the child rows referencing table " + info.tableOracleName
-                        + " by foreign key " + lookup.toolNameBasis + " (" + keySummary
-                        + "). Returns the child rows as a JSON array.";
-            } else {
-                String kindWord = lookup.kind.equals("uk") ? "unique key" : "index";
-                description = "Look up " + (lookup.single ? "the row" : "rows") + " in table "
-                        + info.tableOracleName + " by " + kindWord + " " + lookup.toolNameBasis
-                        + " (" + keySummary + "). "
-                        + (lookup.single
-                                ? "Returns the matching row as a JSON object, or {\\\"found\\\":false}."
-                                : "Returns the matching rows as a JSON array.");
-            }
+            String description = mcpLookupDescription(lookup.kind, info.tableOracleName,
+                    lookup.childTableOracleName, lookup.toolNameBasis, keySummary, lookup.single);
 
             // FK child lookups return the CHILD table's rows (serialized by the child's helper);
             // unique-key / index lookups return this table's own rows.
@@ -11712,6 +11746,7 @@ public class SAAdminWrangler extends SADbWrangler {
                                     String otherFKClassName = "";
                                     String otherFKRowFileName = "";
                                     String otherFKMethodName = "";
+                                    String otherTableOracleName = "";
                                     //int    tableLoopTableId = 0;
 
                                     // Loop through list of tables and see if we will be creating it.
@@ -11720,6 +11755,11 @@ public class SAAdminWrangler extends SADbWrangler {
                                                 && theTables[tableLoop].realOwner.equals(childFKOwner)
                                                 && (!broken[tableLoop])) {
                                             otherBaseFileName = theTables[tableLoop].fixedJavaName;
+                                            // The child's own Oracle name, for the MCP description.
+                                            // Taken from the Table rather than rebuilt from
+                                            // childFKOwner/childFKTName so it carries the same
+                                            // owner-prefixing the parent's name already has.
+                                            otherTableOracleName = theTables[tableLoop].oracleName;
                                             doOtherConstraint = true;
                                             otherTablesUsed[tableLoop] = true;
                                             //tableLoopTableId = tableLoop;
@@ -11755,6 +11795,7 @@ public class SAAdminWrangler extends SADbWrangler {
                                             fkLookup.constraintName = constraintRowSet.getString("CONSTRAINT_NAME");
                                             fkLookup.constraintOwner = constraintRowSet.getString("OWNER");
                                             fkLookup.toolNameBasis = childFKConstraintName;
+                                            fkLookup.childTableOracleName = otherTableOracleName;
                                             fkLookup.kind = "fk";
                                             fkLookup.single = false;
                                             fkLookup.useRowOverload = true;

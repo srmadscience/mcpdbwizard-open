@@ -157,7 +157,13 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # and date plan documents, bump-version.sh, the index-by work. Every one carries the notice
 # because it is ours. A RISE is the benign direction here and is ordinary maintenance; a FALL
 # would mean a file lost its notice, which is the thing this number exists to catch.
-expect "copyright chain-of-title lines" 448 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-21 (later the same day): 448 -> 451. Three files, one notice each -- the FK child-lookup
+# description work: McpLookupDescriptionTest, DescriptionBadgeTest, and its plan document. Checked
+# to be purely ADDITIVE rather than trusting the direction: the set of files carrying the notice
+# before and after differs by exactly those three, with none dropping out. That is the check worth
+# doing, because four gained and one lost also reads as +3 and is the failure this number exists
+# to catch.
+expect "copyright chain-of-title lines" 451 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 

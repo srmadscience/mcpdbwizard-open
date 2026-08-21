@@ -192,6 +192,16 @@ public class TableMcpInfo {
         public String childRowClass;
         /** FK child lookup only: the child table's fixed Java name (to find its RowToJson helper + confirm it is exposed). */
         public String childTableFixedName;
+        /**
+         * FK child lookup only: the child table's ORACLE name, qualified the same way every other
+         * table name in a description is.
+         *
+         * <p>The two names above are JAVA names, which is why this is a separate field rather than
+         * something the emission site could derive: the description has to say where the returned
+         * rows come from, and it named only the PARENT until 2026-08-21. Taken from the child
+         * Table's own {@code oracleName} so the owner-prefixing rule is not re-implemented here.
+         */
+        public String childTableOracleName;
         /** FK child lookup only: the child table's method-name base (lower-cased fixed name); set during the emission post-pass. */
         public String childMethodBase;
         /** The key columns (resolved to the table's crossable columns at emission time), in key order. */
