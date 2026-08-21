@@ -158,6 +158,58 @@ public final class McpDates {
     }
 
     /**
+     * ISO text to the form an Oracle format mask matches, for a zoned timestamp crossing MCP.
+     *
+     * <p><b>Why this exists rather than a reformat.</b> MCP speaks ISO-8601, where a {@code T}
+     * separates the date from the time. The generated PL/SQL converts a zoned index-by element with
+     * {@code 'yyyy-mm-dd hh24:mi:ss.ff9 TZR'}, which has a SPACE there — measured, an ISO {@code T}
+     * against that mask raises ORA-01858. The separator before the ZONE is flexible (with or
+     * without a space, offset or region name, all accepted), so this is the only difference that
+     * matters.
+     *
+     * <p><b>It is a TEXTUAL swap, deliberately, and not a parse-and-reformat.</b> Parsing would
+     * yield an instant and lose the caller's zone, so rendering it again would substitute the
+     * server's — silently turning {@code +05:30} into whatever the server runs on, which is the
+     * exact defect this whole area was fixed for.
+     *
+     * @param theIsoText the caller's value, or null
+     * @return the same value with the date/time separator Oracle's mask expects
+     */
+    public static String toOracleTimestampText(String theIsoText) {
+        if (theIsoText == null) {
+            return null;
+        }
+
+        // Only the FIRST 'T', and only where a date-time separator can be: position 10 in
+        // yyyy-mm-dd. Replacing every 'T' would corrupt a region name (Asia/Katmandu has none, but
+        // America/Port_of_Spain and US/Eastern do carry letters, and a blanket replace is the kind
+        // of shortcut that works on the test value and not on the estate).
+        if (theIsoText.length() > 10 && theIsoText.charAt(10) == 'T') {
+            return theIsoText.substring(0, 10) + ' ' + theIsoText.substring(11);
+        }
+
+        return theIsoText;
+    }
+
+    /**
+     * The reverse: what Oracle handed back, as the ISO text MCP crosses.
+     *
+     * @param theOracleText the value from the database, or null
+     * @return the same value with an ISO {@code T} separator
+     */
+    public static String fromOracleTimestampText(String theOracleText) {
+        if (theOracleText == null) {
+            return null;
+        }
+
+        if (theOracleText.length() > 10 && theOracleText.charAt(10) == ' ') {
+            return theOracleText.substring(0, 10) + 'T' + theOracleText.substring(11);
+        }
+
+        return theOracleText;
+    }
+
+    /**
      * Read one of the accepted forms.
      *
      * @param theValue the caller's value; {@code toString} is used, so a JSON string arrives here

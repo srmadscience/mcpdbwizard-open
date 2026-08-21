@@ -6199,7 +6199,7 @@ public class SAAdminWrangler extends SADbWrangler {
             if (comments) {
                 theJavaCode.print("// PL/SQL collection (PlsqlArray) -> JSON array of its elements (null -> JSON null)");
             }
-            theJavaCode.print("private static String collectionToJson(com.mcpdbwizard.pub.PlsqlArray theColl, java.sql.Connection theConn) throws Exception");
+            theJavaCode.print("private static String collectionToJson(com.mcpdbwizard.pub.PlsqlArray theColl, java.sql.Connection theConn, String theKind) throws Exception");
             theJavaCode.indent();
             theJavaCode.print("{");
             theJavaCode.print("if (theColl == null) { return \"null\"; }");
@@ -6209,6 +6209,12 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("  {");
             theJavaCode.print("  Object theValue = theValues[seq];");
             theJavaCode.print("  if (theValue instanceof java.util.Date) { theValue = formatIsoDate((java.util.Date) theValue); }");
+            // A zoned element comes back as the TEXT Oracle rendered through the TZR mask, which
+            // separates date from time with a space. MCP speaks ISO, so put the T back. Textual,
+            // not a reparse -- reparsing would resolve the zone away and re-render it in the
+            // server's, which is precisely what this area was fixed to stop.
+            theJavaCode.print("  else if (theValue instanceof String && \"timestamptz\".equals(theKind))");
+            theJavaCode.print("    { theValue = com.mcpdbwizard.pub.McpDates.fromOracleTimestampText((String) theValue); }");
             theJavaCode.print("  if (seq > 0) { theJson.append(\",\"); }");
             theJavaCode.print("  theJson.append(theMapper.writeValueAsString(theValue));");
             theJavaCode.print("  }");
@@ -6234,6 +6240,7 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("  else if (theKind.equals(\"number\")) { theArray[seq] = new java.math.BigDecimal(String.valueOf(theValue)); }");
             theJavaCode.print("  else if (theKind.equals(\"date\")) { theArray[seq] = parseIsoDate(theValue); }");
             theJavaCode.print("  else if (theKind.equals(\"raw\")) { theArray[seq] = java.util.Base64.getDecoder().decode(String.valueOf(theValue)); }");
+            theJavaCode.print("  else if (theKind.equals(\"timestamptz\")) { theArray[seq] = com.mcpdbwizard.pub.McpDates.toOracleTimestampText(String.valueOf(theValue)); }");
             theJavaCode.print("  else { theArray[seq] = String.valueOf(theValue); }");
             theJavaCode.print("  }");
             theJavaCode.print("return theArray;");
@@ -6647,7 +6654,49 @@ public class SAAdminWrangler extends SADbWrangler {
             // A UDT/record element: crosses as a JSON object (element class resolved at runtime).
             return "record";
         }
+        if ("oracle.sql.TIMESTAMPTZ".equals(javaType) || "oracle.sql.TIMESTAMPLTZ".equals(javaType)) {
+            // A ZONED timestamp element: crosses as ISO-8601 text, one string per element.
+            //
+            // Refused outright until 2026-08-21, on the grounds that PlsqlIndexByTable2 would
+            // silently stringify it. That was true and is not any more -- the DAO path now converts
+            // with TO_TIMESTAMP_TZ and a TZR mask in both directions, so the zone survives.
+            //
+            // It crosses as TEXT rather than through the "date" kind on purpose, and the difference
+            // is not cosmetic: the date kind produces java.util.Date objects, and handing one to
+            // PlsqlIndexByTable2.setArray throws "Cannot format given Object as a Number". Text
+            // also keeps the caller's zone verbatim, where anything that parses to an instant would
+            // re-render it in the SERVER's zone.
+            return "timestamptz";
+        }
         return null;
+    }
+
+    /**
+     * How a collection parameter describes itself to a caller.
+     *
+     * <p>Every kind but one keeps the bare {@code "array of <kind>"} it has always had, so existing
+     * tool descriptions do not move. A ZONED timestamp gets a longer phrase because "array of
+     * timestamptz" tells a caller nothing they can act on — and this is exactly the failure a live
+     * MCP session reported for scalar dates: the schema named a standard rather than a form, the
+     * caller guessed, and the guess was refused.
+     *
+     * <p>The LOCAL half is called out because it is a surprise rather than an error: a
+     * {@code TIMESTAMP WITH LOCAL TIME ZONE} keeps no zone of its own, so values come back rendered
+     * in the SERVER's zone. An agent that sent {@code +05:30} and reads back {@code GMT} would
+     * otherwise reasonably conclude the call had failed.
+     */
+    private static String mcpCollectionLabel(String theElementKind) {
+        if ("timestamptz".equals(theElementKind)) {
+            // NO DOUBLE QUOTES IN HERE. This text is printed straight into an emitted
+            // .description("...") literal, and that emission does not escape -- everything else
+            // reaching it is plain prose. Quoting the examples produced a generated file with bare
+            // quotes inside a string literal, which does not compile. Same hazard the config-authored
+            // instructions had to solve, from the other end.
+            return "array of ISO-8601 timestamps with a zone, e.g. 2019-03-01T14:25:36+05:30 or"
+                    + " 2019-03-01T14:25:36 Asia/Calcutta (a LOCAL timestamp is returned in the"
+                    + " server's time zone)";
+        }
+        return "array of " + theElementKind;
     }
 
     /**
@@ -6689,7 +6738,10 @@ public class SAAdminWrangler extends SADbWrangler {
         if ("number".equals(collElementKind)) {
             return "oracle.jdbc.OracleTypes.NUMBER";
         }
-        if ("string".equals(collElementKind)) {
+        if ("string".equals(collElementKind) || "timestamptz".equals(collElementKind)) {
+            // A zoned timestamp rides the VARCHAR slot: the value crosses as text, and the
+            // wrapper's own bindParams re-types it (setDataType(TIMESTAMPTZ), the 80-char element
+            // length and ensureFractionalSeconds) before it reaches Oracle.
             return "oracle.jdbc.OracleTypes.VARCHAR";
         }
         return null;
@@ -6864,8 +6916,26 @@ public class SAAdminWrangler extends SADbWrangler {
                 if (mcpIndexByTypeCode(javaType, elementKind) == null
                         && ("com.mcpdbwizard.pub.PlsqlIndexByTable2".equals(javaType)
                             || "com.mcpdbwizard.pub.PlsqlIndexByTable".equals(javaType))) {
+                    // Name the REAL obstacle, per kind. The old message said "only NUMBER and
+                    // VARCHAR2 elements cross" and blamed PlsqlIndexByTable2 for stringifying --
+                    // a reason that retired when the TZ binding was fixed, and which would have
+                    // sent the next reader to re-derive this whole analysis from something untrue.
+                    //
+                    // DATE and TIMESTAMP: the generated PL/SQL converts them with a mask that
+                    // separates date from time with a SPACE, while MCP crosses dates as ISO with a
+                    // T. A zoned element gets a textual swap on the way through (McpDates); these
+                    // would need the same, plus the fractional-second handling, and the "date"
+                    // element kind actively cannot be reused -- it yields java.util.Date objects,
+                    // which PlsqlIndexByTable2.setArray refuses with "Cannot format given Object
+                    // as a Number".
+                    //
+                    // RAW: MCP crosses binary as base64, this class carries it as hex.
+                    String theObstacle = "raw".equals(elementKind)
+                            ? "MCP crosses binary as base64 and an index-by table carries it as hex"
+                            : "the generated conversion uses a space-separated Oracle mask, not the"
+                                    + " ISO form MCP crosses dates in";
                     return "parameter " + argName + " is an index-by table of " + elementKind
-                            + " (only NUMBER and VARCHAR2 elements cross)";
+                            + " (" + theObstacle + "). NUMBER, VARCHAR2 and zoned timestamps cross.";
                 }
                 continue;
             }
@@ -7294,7 +7364,7 @@ public class SAAdminWrangler extends SADbWrangler {
             // Oracle types throughout, because a caller reading tools/list is being told about a
             // database, not about this generator's Java. The string-accessor and TZ arms said
             // "String", which is a Java type wearing a disguise; they now name the Oracle type.
-            String descTypeLabel = record ? "record" : collection ? "array of " + collElementKind
+            String descTypeLabel = record ? "record" : collection ? mcpCollectionLabel(collElementKind)
                     : lobKind != null ? lobKind.toUpperCase()
                     : refCursor ? "ref cursor, array of row objects"
                     : mcpParamTypeLabel(rawOracleTypeName, javaType);
@@ -7325,8 +7395,10 @@ public class SAAdminWrangler extends SADbWrangler {
                 // on every box; the getter exists in every case the field does.
                 outValueExpr = "RECORD_MAPPER.writeValueAsString(theProc.get" + cap + "())";
             } else if (collection) {
-                outValueExpr = ("record".equals(collElementKind) ? "recordCollectionToJson" : "collectionToJson")
-                        + "(theProc.get" + cap + "(), theFactory.theConnection)";
+                outValueExpr = "record".equals(collElementKind)
+                        ? "recordCollectionToJson(theProc.get" + cap + "(), theFactory.theConnection)"
+                        : "collectionToJson(theProc.get" + cap + "(), theFactory.theConnection, \""
+                                + collElementKind + "\")";
             } else if ("clob".equals(lobKind)) {
                 // NCLOB rides the CLOB path numerically but keeps its own accessor name.
                 outValueExpr = "clobToJson(theProc.get" + cap + mcpClobAccessorInfix(rawOracleTypeName) + "())";

@@ -151,6 +151,56 @@ class McpDatesTest {
         }
     }
 
+    // ---- the ISO <-> Oracle-mask separator, for a zoned index-by crossing MCP ----
+
+    @Test
+    void theIsoSeparatorBecomesTheOneOraclesMaskExpects() {
+        // Measured: an ISO T against 'yyyy-mm-dd hh24:mi:ss.ff9 TZR' raises ORA-01858.
+        assertEquals("2019-03-01 14:25:36.0+05:30",
+                McpDates.toOracleTimestampText("2019-03-01T14:25:36.0+05:30"));
+        assertEquals("2019-03-01 14:25:36.0 Asia/Calcutta",
+                McpDates.toOracleTimestampText("2019-03-01T14:25:36.0 Asia/Calcutta"));
+    }
+
+    @Test
+    void theSeparatorSwapIsReversible() {
+        String theIso = "2019-03-01T14:25:36.123 Asia/Calcutta";
+        assertEquals(theIso,
+                McpDates.fromOracleTimestampText(McpDates.toOracleTimestampText(theIso)));
+    }
+
+    /**
+     * The zone text must survive untouched. A parse-and-reformat would resolve the offset to an
+     * instant and render it in the SERVER's zone -- silently replacing what the caller sent, which
+     * is the defect this whole area was fixed for.
+     */
+    @Test
+    void theZoneTextIsCarriedThroughUnchanged() {
+        assertTrue(McpDates.toOracleTimestampText("2019-03-01T14:25:36.0+05:30").endsWith("+05:30"));
+        assertTrue(McpDates.toOracleTimestampText("2019-03-01T14:25:36.0 US/Eastern")
+                .endsWith("US/Eastern"));
+    }
+
+    /**
+     * Only the date/time separator moves. A blanket replace would corrupt a region name -- the kind
+     * of shortcut that passes on the test value and fails on somebody's timezone.
+     */
+    @Test
+    void aTinLaterInTheStringIsLeftAlone() {
+        assertEquals("2019-03-01 14:25:36.0 US/Eastern",
+                McpDates.toOracleTimestampText("2019-03-01T14:25:36.0 US/Eastern"));
+        assertEquals("2019-03-01 14:25:36.0 America/Port_of_Spain",
+                McpDates.toOracleTimestampText("2019-03-01T14:25:36.0 America/Port_of_Spain"));
+    }
+
+    @Test
+    void theSeparatorHelpersTolerateNullAndOddInput() {
+        assertNull(McpDates.toOracleTimestampText(null));
+        assertNull(McpDates.fromOracleTimestampText(null));
+        assertEquals("short", McpDates.toOracleTimestampText("short"));
+        assertEquals("2019-03-01", McpDates.toOracleTimestampText("2019-03-01"));
+    }
+
     @Test
     void aTimestampRoundTripsThroughTheStringForm() {
         java.sql.Timestamp t = McpDates.parseTimestamp("2003-06-09T18:38:00.500");
