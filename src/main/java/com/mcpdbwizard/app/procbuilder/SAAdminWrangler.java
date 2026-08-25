@@ -5069,6 +5069,9 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("//     }");
             theJavaCode.print("//   }");
             theJavaCode.print("// Logging is forced to java.util.logging (stderr): stdout carries the protocol frames.");
+            theJavaCode.print("// Run with the single argument --list-tools to print the tools/list payload this");
+            theJavaCode.print("// server would answer with and exit. It connects to nothing, so it works before the");
+            theJavaCode.print("// database is reachable and without an MCP client.");
         }
 
         theJavaCode.print("public class " + serverClassName);
@@ -5238,9 +5241,112 @@ public class SAAdminWrangler extends SADbWrangler {
                     + " as <sequence>_nextval tools returning the next value.";
         }
 
+        // The McpServer builder chain (serverInfo/instructions/capabilities/tools/build) is the same
+        // for both transports, so build the tool list first and emit the chain per transport below.
+        // Built HERE, above main's own body, because --list-tools needs the same listing at the very
+        // top of main - before the factory or the pool exists. This loop only concatenates a string;
+        // it emits nothing, so hoisting it changes the generated source not at all.
+        String toolInvocationListing = "";
+        for (int seq = 0; seq < mcpViewList.size(); seq++) {
+            SingleNamespaceObject theView = (SingleNamespaceObject) mcpViewList.get(seq);
+            DualityViewMcpInfo info = theView.mcpDualityViewInfo;
+            String methodBase = Character.toLowerCase(theView.fixedJavaName.charAt(0)) + theView.fixedJavaName.substring(1);
+            if (toolInvocationListing.length() > 0) {
+                toolInvocationListing = toolInvocationListing + ", ";
+            }
+            toolInvocationListing = toolInvocationListing + methodBase + "DocGetAll(), " + methodBase + "DocGetById()";
+            if (info.allowInsert) {
+                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocInsert()";
+            }
+            if (info.allowUpdate) {
+                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocUpdate()";
+            }
+            if (info.allowDelete) {
+                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocDelete()";
+            }
+        }
+        for (int seq = 0; seq < mcpTableList.size(); seq++) {
+            TableMcpInfo tableInfo = (TableMcpInfo) mcpTableList.get(seq);
+            // Per-table curation, exactly as the duality-view loop above gates on the view's
+            // ALLOW flags. An operation left out here has no tool-spec method generated either
+            // (see addTableMcpTools), so it is absent from the server, not merely unlisted.
+            // The order below is the order this loop has always emitted (get_by_pk, insert,
+            // update, delete, then the lookups); it is preserved exactly so that a config
+            // without curation generates a byte-identical server.
+            String tableTools = "";
+            if (tableInfo.readable) {
+                tableTools = tableInfo.methodBase + "GetByPk()";
+            }
+            if (tableInfo.insertable) {
+                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Insert()";
+            }
+            if (tableInfo.updatable) {
+                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Update()";
+            }
+            if (tableInfo.deletable) {
+                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Delete()";
+            }
+            if (tableInfo.readable) {
+                for (int lk = 0; lk < tableInfo.lookups.size(); lk++) {
+                    tableTools = tableTools + (tableTools.length() > 0 ? ", " : "")
+                            + mcpLookupToolMethod(tableInfo.methodBase, tableInfo.lookups.get(lk).methodName) + "()";
+                }
+            }
+            if (tableTools.length() == 0) {
+                continue;
+            }
+            if (toolInvocationListing.length() > 0) {
+                toolInvocationListing = toolInvocationListing + ", ";
+            }
+            toolInvocationListing = toolInvocationListing + tableTools;
+        }
+        for (int seq = 0; seq < mcpFunctionList.size(); seq++) {
+            SingleNamespaceObject theFunction = (SingleNamespaceObject) mcpFunctionList.get(seq);
+            if (toolInvocationListing.length() > 0) {
+                toolInvocationListing = toolInvocationListing + ", ";
+            }
+            toolInvocationListing = toolInvocationListing + "plsql" + theFunction.fixedJavaName + "()";
+        }
+        for (int seq = 0; seq < mcpSqlList.size(); seq++) {
+            SqlStatementWrangler theStatement = (SqlStatementWrangler) mcpSqlList.get(seq);
+            if (toolInvocationListing.length() > 0) {
+                toolInvocationListing = toolInvocationListing + ", ";
+            }
+            toolInvocationListing = toolInvocationListing + "sql" + theStatement.realFilename + "()";
+        }
+        for (int seq = 0; seq < mcpSequenceList.size(); seq++) {
+            SingleNamespaceObject theSequence = (SingleNamespaceObject) mcpSequenceList.get(seq);
+            if (toolInvocationListing.length() > 0) {
+                toolInvocationListing = toolInvocationListing + ", ";
+            }
+            toolInvocationListing = toolInvocationListing + "sequence" + theSequence.fixedJavaName + "()";
+        }
+
         theJavaCode.print("public static void main(String[] args) throws Exception");
         theJavaCode.indent();
         theJavaCode.print("{");
+        if (comments) {
+            theJavaCode.print("// --list-tools prints the exact tools/list payload this server would answer with, and");
+            theJavaCode.print("// exits. It runs BEFORE the factory or the pool is created, so it needs no database and");
+            theJavaCode.print("// no MCP handshake: a tool spec is a name, a description and an input schema baked in at");
+            theJavaCode.print("// generation time, and only its call handler ever reaches Oracle. That is what makes it");
+            theJavaCode.print("// answerable for a server that has been compiled but has never successfully started -");
+            theJavaCode.print("// which is exactly when somebody wants to know what it would have exposed.");
+            theJavaCode.print("// Owning stdout is safe here: nothing has written to it and no transport has started.");
+        }
+        theJavaCode.print("if (args.length > 0 && args[0].equalsIgnoreCase(\"--list-tools\"))");
+        theJavaCode.print("  {");
+        theJavaCode.print("  java.util.List<Tool> theToolListing = new java.util.ArrayList<Tool>();");
+        theJavaCode.print("  for (SyncToolSpecification theSpec : java.util.Arrays.asList(" + toolInvocationListing + "))");
+        theJavaCode.print("    {");
+        theJavaCode.print("    theToolListing.add(theSpec.tool());");
+        theJavaCode.print("    }");
+        theJavaCode.print("  theMapper = new JacksonMcpJsonMapper(tools.jackson.databind.json.JsonMapper.builder().build());");
+        theJavaCode.print("  System.out.println(theMapper.writeValueAsString(");
+        theJavaCode.print("      new io.modelcontextprotocol.spec.McpSchema.ListToolsResult(theToolListing, null)));");
+        theJavaCode.print("  return;");
+        theJavaCode.print("  }");
+        theJavaCode.print("");
         if (mcpPooled) {
             if (comments) {
                 theJavaCode.print("// The pool creates its members on demand and connects each one before handing");
@@ -5334,83 +5440,6 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("theMapper = new JacksonMcpJsonMapper(tools.jackson.databind.json.JsonMapper.builder().build());");
         theJavaCode.print("");
 
-        // The McpServer builder chain (serverInfo/instructions/capabilities/tools/build) is the same
-        // for both transports, so build the tool list first and emit the chain per transport below.
-        String toolInvocationListing = "";
-        for (int seq = 0; seq < mcpViewList.size(); seq++) {
-            SingleNamespaceObject theView = (SingleNamespaceObject) mcpViewList.get(seq);
-            DualityViewMcpInfo info = theView.mcpDualityViewInfo;
-            String methodBase = Character.toLowerCase(theView.fixedJavaName.charAt(0)) + theView.fixedJavaName.substring(1);
-            if (toolInvocationListing.length() > 0) {
-                toolInvocationListing = toolInvocationListing + ", ";
-            }
-            toolInvocationListing = toolInvocationListing + methodBase + "DocGetAll(), " + methodBase + "DocGetById()";
-            if (info.allowInsert) {
-                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocInsert()";
-            }
-            if (info.allowUpdate) {
-                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocUpdate()";
-            }
-            if (info.allowDelete) {
-                toolInvocationListing = toolInvocationListing + ", " + methodBase + "DocDelete()";
-            }
-        }
-        for (int seq = 0; seq < mcpTableList.size(); seq++) {
-            TableMcpInfo tableInfo = (TableMcpInfo) mcpTableList.get(seq);
-            // Per-table curation, exactly as the duality-view loop above gates on the view's
-            // ALLOW flags. An operation left out here has no tool-spec method generated either
-            // (see addTableMcpTools), so it is absent from the server, not merely unlisted.
-            // The order below is the order this loop has always emitted (get_by_pk, insert,
-            // update, delete, then the lookups); it is preserved exactly so that a config
-            // without curation generates a byte-identical server.
-            String tableTools = "";
-            if (tableInfo.readable) {
-                tableTools = tableInfo.methodBase + "GetByPk()";
-            }
-            if (tableInfo.insertable) {
-                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Insert()";
-            }
-            if (tableInfo.updatable) {
-                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Update()";
-            }
-            if (tableInfo.deletable) {
-                tableTools = tableTools + (tableTools.length() > 0 ? ", " : "") + tableInfo.methodBase + "Delete()";
-            }
-            if (tableInfo.readable) {
-                for (int lk = 0; lk < tableInfo.lookups.size(); lk++) {
-                    tableTools = tableTools + (tableTools.length() > 0 ? ", " : "")
-                            + mcpLookupToolMethod(tableInfo.methodBase, tableInfo.lookups.get(lk).methodName) + "()";
-                }
-            }
-            if (tableTools.length() == 0) {
-                continue;
-            }
-            if (toolInvocationListing.length() > 0) {
-                toolInvocationListing = toolInvocationListing + ", ";
-            }
-            toolInvocationListing = toolInvocationListing + tableTools;
-        }
-        for (int seq = 0; seq < mcpFunctionList.size(); seq++) {
-            SingleNamespaceObject theFunction = (SingleNamespaceObject) mcpFunctionList.get(seq);
-            if (toolInvocationListing.length() > 0) {
-                toolInvocationListing = toolInvocationListing + ", ";
-            }
-            toolInvocationListing = toolInvocationListing + "plsql" + theFunction.fixedJavaName + "()";
-        }
-        for (int seq = 0; seq < mcpSqlList.size(); seq++) {
-            SqlStatementWrangler theStatement = (SqlStatementWrangler) mcpSqlList.get(seq);
-            if (toolInvocationListing.length() > 0) {
-                toolInvocationListing = toolInvocationListing + ", ";
-            }
-            toolInvocationListing = toolInvocationListing + "sql" + theStatement.realFilename + "()";
-        }
-        for (int seq = 0; seq < mcpSequenceList.size(); seq++) {
-            SingleNamespaceObject theSequence = (SingleNamespaceObject) mcpSequenceList.get(seq);
-            if (toolInvocationListing.length() > 0) {
-                toolInvocationListing = toolInvocationListing + ", ";
-            }
-            toolInvocationListing = toolInvocationListing + "sequence" + theSequence.fixedJavaName + "()";
-        }
         if (comments) {
             theJavaCode.print("// Optional rate limit (MCP_RATE_LIMIT calls/sec, MCP_RATE_BURST depth). Unset means");
             theJavaCode.print("// unlimited, so this is inert unless someone asks for it. A mistyped value stops");
