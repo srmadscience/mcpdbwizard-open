@@ -163,7 +163,17 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # before and after differs by exactly those three, with none dropping out. That is the check worth
 # doing, because four gained and one lost also reads as +3 and is the failure this number exists
 # to catch.
-expect "copyright chain-of-title lines" 451 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-25: 451 -> 463. TWELVE new files, one notice each, from the 2.0.3 arcs -- the
+# Runtime tool-listing work (McpToolListing(+Test), ToolListingStub,
+# RuntimeToolListingRenderTest, ServiceOptionsToolListingRenderTest,
+# GeneratedMcpToolListingShapeTest), Prometheus service discovery
+# (ServiceDiscoveryController(+Test), McpMetricsTargets, ScrapeAuthenticationEntryPoint,
+# ServiceDiscoveryEndpointSecurityTest), and OracleSettingsStartupReportTest.
+# Checked the way the 2026-08-21 entry says to, not by the direction: a per-file count at
+# 33f460f and at HEAD gives 12 files GAINED, 0 LOST, and 0 file present in both whose count
+# moved. A set difference of exactly the new files is the only shape that means "additive";
+# +13 and -1 also reads as +12 and is the failure this number exists to catch.
+expect "copyright chain-of-title lines" 463 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 
@@ -253,7 +263,13 @@ expect "Orinda* class identifiers" 0 \
 # Note app/NOTICE is NOT among them despite the list above: it names "Orinda Software Ltd", the
 # company, not "OrindaBuild", the product. The four were README.txt x2, LogBackends.java and
 # LogBackendsTest.java.
-expect "deliberate OrindaBuild history notes" 7 "$(count 'OrindaBuild')"
+# 2026-08-25: 7 -> 8. ONE more, and the same kind again: the "LLMs for fun and profit" post
+# under public_website/.../writing/, which tells the reader "this turned into a product called
+# OrindaBuild". Prose about what the product used to be called is precisely what this assertion
+# permits -- the FAQ's three are the same sentence in a different page. Verified by listing the
+# carrying files before and after rather than by the total: the set differs by that one file
+# only, and none of the other four moved.
+expect "deliberate OrindaBuild history notes" 8 "$(count 'OrindaBuild')"
 
 # Phase 3: artifact and jar names. NOT the same as the property keys (jdbcwizard.*,
 # JDBCWIZARD_*, mcpdbwizard_mcp_*), which are phase 5 and keep a compatibility alias --
