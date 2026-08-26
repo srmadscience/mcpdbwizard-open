@@ -6226,6 +6226,19 @@ public class SAAdminWrangler extends SADbWrangler {
 
             theJavaCode.print("");
             if (comments) {
+                theJavaCode.print("// Does this collection element kind cross as Oracle date/time TEXT? Those come back");
+                theJavaCode.print("// with a space between date and time and have to be handed back as ISO. A plain");
+                theJavaCode.print("// VARCHAR2 element is the caller's own string and must not be rewritten.");
+            }
+            theJavaCode.print("private static boolean isOracleDateTimeKind(String theKind)");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("return \"timestamptz\".equals(theKind) || \"datetext\".equals(theKind) || \"timestamptext\".equals(theKind);");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+
+            theJavaCode.print("");
+            if (comments) {
                 theJavaCode.print("// PL/SQL collection (PlsqlArray) -> JSON array of its elements (null -> JSON null)");
             }
             theJavaCode.print("private static String collectionToJson(com.mcpdbwizard.pub.PlsqlArray theColl, java.sql.Connection theConn, String theKind) throws Exception");
@@ -6242,8 +6255,18 @@ public class SAAdminWrangler extends SADbWrangler {
             // separates date from time with a space. MCP speaks ISO, so put the T back. Textual,
             // not a reparse -- reparsing would resolve the zone away and re-render it in the
             // server's, which is precisely what this area was fixed to stop.
-            theJavaCode.print("  else if (theValue instanceof String && \"timestamptz\".equals(theKind))");
+            // All three text kinds come back in the same shape -- whatever their mask, Oracle
+            // renders date and time separated by a SPACE -- so one reverse swap serves them all.
+            // The "string" kind must NOT reach it: a VARCHAR2 element is the caller's own text and
+            // an eleventh character that happens to be a space is not a separator.
+            theJavaCode.print("  else if (theValue instanceof String && isOracleDateTimeKind(theKind))");
             theJavaCode.print("    { theValue = com.mcpdbwizard.pub.McpDates.fromOracleTimestampText((String) theValue); }");
+            // An index-by RAW comes back as the hex RAWTOHEX produced. MCP crosses binary as
+            // base64, so convert -- and note this is the ONLY kind here that is not a date: the
+            // plain "raw" kind of a generated collection class arrives as a byte[] and Jackson
+            // base64s it on its own, which is why it needs no branch.
+            theJavaCode.print("  else if (theValue instanceof String && \"rawhex\".equals(theKind))");
+            theJavaCode.print("    { theValue = com.mcpdbwizard.pub.McpBinary.fromOracleRawText((String) theValue); }");
             theJavaCode.print("  if (seq > 0) { theJson.append(\",\"); }");
             theJavaCode.print("  theJson.append(theMapper.writeValueAsString(theValue));");
             theJavaCode.print("  }");
@@ -6269,7 +6292,18 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("  else if (theKind.equals(\"number\")) { theArray[seq] = new java.math.BigDecimal(String.valueOf(theValue)); }");
             theJavaCode.print("  else if (theKind.equals(\"date\")) { theArray[seq] = parseIsoDate(theValue); }");
             theJavaCode.print("  else if (theKind.equals(\"raw\")) { theArray[seq] = java.util.Base64.getDecoder().decode(String.valueOf(theValue)); }");
+            // The same base64 argument, one layer further down. A generated collection class takes
+            // the bytes; an index-by table has nowhere to put them and carries the value as the hex
+            // its emitted HEXTORAW converts, so the decode is followed by a hex encode. Both live in
+            // McpBinary where they are unit-tested against all 256 byte values.
+            theJavaCode.print("  else if (theKind.equals(\"rawhex\")) { theArray[seq] = com.mcpdbwizard.pub.McpBinary.toOracleRawText(String.valueOf(theValue)); }");
             theJavaCode.print("  else if (theKind.equals(\"timestamptz\")) { theArray[seq] = com.mcpdbwizard.pub.McpDates.toOracleTimestampText(String.valueOf(theValue)); }");
+            // DATE and unzoned TIMESTAMP: the same T-for-space swap, plus the fractional-seconds
+            // handling each mask needs. Measured -- TO_DATE has no FF element and raises ORA-01830
+            // on a fraction, TO_TIMESTAMP's ff8 raises it on a NINTH digit. Both live in McpDates
+            // where they are unit-tested; the emitter cannot test itself.
+            theJavaCode.print("  else if (theKind.equals(\"datetext\")) { theArray[seq] = com.mcpdbwizard.pub.McpDates.toOracleDateText(String.valueOf(theValue)); }");
+            theJavaCode.print("  else if (theKind.equals(\"timestamptext\")) { theArray[seq] = com.mcpdbwizard.pub.McpDates.toOracleUnzonedTimestampText(String.valueOf(theValue)); }");
             theJavaCode.print("  else { theArray[seq] = String.valueOf(theValue); }");
             theJavaCode.print("  }");
             theJavaCode.print("return theArray;");
@@ -6658,9 +6692,22 @@ public class SAAdminWrangler extends SADbWrangler {
      * Keyed on the element's raw Oracle type name (mapped through {@link JavaUtils#oracle2JavaDatatype}):
      * a scalar collection's {@code setNewValuesAsObject} accepts {@code java.math.BigDecimal}/{@code
      * String} directly; a record/object collection accepts the generated element class instance
-     * (built by Jackson). DATE/RAW/boolean elements still need typed construction and stay out.
+     * (built by Jackson). Boolean elements still need typed construction and stay out.
+     *
+     * <p><b>The answer depends on the CONTAINER as well as the element, which is why the container
+     * type is a parameter.</b> A DATE element of a generated VARRAY or nested table crosses as
+     * {@code "date"} and is built into a {@link java.util.Date} -- which those classes take
+     * happily. Handing that same object to an index-by table throws
+     * {@code "Cannot format given Object as a Number"}: {@code PlsqlIndexByTable2} stores every
+     * element as a String or a BigDecimal and has no third representation. An index-by table
+     * therefore gets a distinct TEXT kind for the same Oracle type, converted to the spelling its
+     * emitted mask matches.
+     *
+     * <p>Only the index-by arm can return the text kinds, so a generated collection class sees
+     * exactly the kinds it saw before -- including {@code null} for an unzoned
+     * {@code java.sql.Timestamp}, which stays gated there because nothing has ever exercised it.
      */
-    private static String mcpCollectionElementKind(String elementOracleType) {
+    private static String mcpCollectionElementKind(String elementOracleType, String theContainerJavaType) {
         if (elementOracleType == null || elementOracleType.length() == 0) {
             return null;
         }
@@ -6673,11 +6720,28 @@ public class SAAdminWrangler extends SADbWrangler {
         }
         if ("java.util.Date".equals(javaType)) {
             // DATE element: crosses as an ISO-8601 string per element.
-            return "date";
+            //
+            // Two kinds for one Oracle type, on purpose. A generated collection class is handed a
+            // java.util.Date; an index-by table cannot hold one (see the class comment above) and
+            // is handed the TEXT its emitted TO_DATE mask matches instead.
+            return mcpIsIndexByTable(theContainerJavaType) ? "datetext" : "date";
+        }
+        if ("java.sql.Timestamp".equals(javaType) && mcpIsIndexByTable(theContainerJavaType)) {
+            // Unzoned TIMESTAMP element of an index-by table: crosses as ISO text, converted to the
+            // ff8 mask the emitted block uses. Gated everywhere else -- returning a kind here for a
+            // generated collection class would newly expose a path no fixture has ever run.
+            return "timestamptext";
         }
         if ("byte[]".equals(javaType)) {
             // RAW element: crosses as a base64 string per element.
-            return "raw";
+            //
+            // Two kinds for one Oracle type, as DATE has above, but for a different reason. A
+            // generated collection class is handed the byte[] itself. An index-by table carries a
+            // RAW as the HEX its emitted HEXTORAW / RAWTOHEX pair converts -- so base64 has to
+            // become hex on the way in and hex back to base64 on the way out, which is real work in
+            // both directions rather than the one-character mask swap DATE and TIMESTAMP needed.
+            // See McpBinary, where it is unit-tested.
+            return mcpIsIndexByTable(theContainerJavaType) ? "rawhex" : "raw";
         }
         if ("Object".equals(javaType)) {
             // A UDT/record element: crosses as a JSON object (element class resolved at runtime).
@@ -6703,11 +6767,11 @@ public class SAAdminWrangler extends SADbWrangler {
     /**
      * How a collection parameter describes itself to a caller.
      *
-     * <p>Every kind but one keeps the bare {@code "array of <kind>"} it has always had, so existing
-     * tool descriptions do not move. A ZONED timestamp gets a longer phrase because "array of
-     * timestamptz" tells a caller nothing they can act on — and this is exactly the failure a live
-     * MCP session reported for scalar dates: the schema named a standard rather than a form, the
-     * caller guessed, and the guess was refused.
+     * <p>The plain kinds keep the bare {@code "array of <kind>"} they have always had, so existing
+     * tool descriptions do not move. The ones an index-by table carries as TEXT each get a longer
+     * phrase, because "array of timestamptz" or "array of rawhex" tells a caller nothing they can
+     * act on — and this is exactly the failure a live MCP session reported for scalar dates: the
+     * schema named a standard rather than a form, the caller guessed, and the guess was refused.
      *
      * <p>The LOCAL half is called out because it is a surprise rather than an error: a
      * {@code TIMESTAMP WITH LOCAL TIME ZONE} keeps no zone of its own, so values come back rendered
@@ -6715,6 +6779,29 @@ public class SAAdminWrangler extends SADbWrangler {
      * otherwise reasonably conclude the call had failed.
      */
     private static String mcpCollectionLabel(String theElementKind) {
+        // NO DOUBLE QUOTES IN ANY OF THESE. See the note in the zoned arm below.
+        if ("datetext".equals(theElementKind)) {
+            // Say the sub-second truncation out loud. An Oracle DATE cannot hold a fraction, so
+            // sending one is not an error and not honoured either -- exactly the silent middle
+            // ground a caller cannot discover, which is the defect a live session reported here.
+            return "array of ISO-8601 dates, e.g. 1990-01-01 or 1990-01-01T09:30:00"
+                    + " (an Oracle DATE has no sub-second precision, so fractional seconds are"
+                    + " dropped, and no time means midnight)";
+        }
+        if ("timestamptext".equals(theElementKind)) {
+            return "array of ISO-8601 timestamps, e.g. 2019-03-01T14:25:36 or"
+                    + " 2019-03-01T14:25:36.123456 (up to 8 fractional digits; no time zone --"
+                    + " use a TIMESTAMP WITH TIME ZONE parameter for that)";
+        }
+        if ("rawhex".equals(theElementKind)) {
+            // Say base64 rather than binary, and say it is not hex. A RAW parameter is described in
+            // hex everywhere else a caller is likely to have met one -- SQL*Plus, a DESCRIBE, the
+            // rest of this estate -- so hex is the wrong guess a caller is MOST likely to make, and
+            // it is the one guess that cannot be detected: a hex string is usually valid base64 too
+            // and decodes silently to different bytes. See McpBinary.
+            return "array of binary values as base64, NOT hex, e.g. 3q2+7w== for the four bytes"
+                    + " DE AD BE EF";
+        }
         if ("timestamptz".equals(theElementKind)) {
             // NO DOUBLE QUOTES IN HERE. This text is printed straight into an emitted
             // .description("...") literal, and that emission does not escape -- everything else
@@ -6748,6 +6835,19 @@ public class SAAdminWrangler extends SADbWrangler {
     }
 
     /**
+     * Is this parameter a PL/SQL index-by table rather than a generated collection class?
+     *
+     * <p>Both runtime classes count. The distinction drives three separate decisions — how the
+     * collection is CONSTRUCTED, which element kinds are available to it, and whether an element
+     * crosses as a typed object or as text — so it is named once here rather than spelled out at
+     * each of them, which is how the three drifted apart in the first place.
+     */
+    private static boolean mcpIsIndexByTable(String javaType) {
+        return "com.mcpdbwizard.pub.PlsqlIndexByTable2".equals(javaType)
+                || "com.mcpdbwizard.pub.PlsqlIndexByTable".equals(javaType);
+    }
+
+    /**
      * The {@code oracle.jdbc.OracleTypes} constant an index-by table must be constructed with,
      * or {@code null} when the type is not an index-by table (a generated collection class,
      * which takes a log instead).
@@ -6755,22 +6855,42 @@ public class SAAdminWrangler extends SADbWrangler {
      * <p>{@link com.mcpdbwizard.pub.PlsqlIndexByTable2} decides element-by-element whether a value
      * is a {@code String} or a {@code BigDecimal} purely from this code, so it must match the
      * element kind or the array binds as the wrong type. The class is genuinely binary — every
-     * branch in it reads {@code == OracleTypes.VARCHAR} with numeric as the sole alternative —
-     * which is why only {@code number} and {@code string} elements are supported here; a
-     * {@code date} or {@code raw} index-by is rejected upstream rather than silently stringified.
+     * branch in it reads {@code == OracleTypes.VARCHAR} with numeric as the sole alternative.
+     *
+     * <p><b>That is a constraint on STORAGE, not on the range of Oracle types that can cross.</b>
+     * Reading it as the latter is what kept DATE, TIMESTAMP and RAW gated: each rides the VARCHAR
+     * slot as text, and the emitted anonymous block converts it — {@code TO_DATE} / {@code TO_CHAR}
+     * for a date, {@code HEXTORAW} / {@code RAWTOHEX} for a RAW — exactly as a zoned timestamp has
+     * done since 2.0.0. That is why every kind but {@code number} below answers VARCHAR.
+     *
+     * <p>The text kinds are NOT interchangeable, which is why they are spelled out one by one below
+     * rather than collapsed into a default. A date and a zoned timestamp differ from each other by
+     * a conversion MASK; a RAW differs from both by its ENCODING — base64 on the wire against hex
+     * in the slot. Each names its own conversion in the emitted server, and a kind that reached this
+     * branch without one would bind the caller's text verbatim: rejected by Oracle if it is lucky,
+     * and accepted as something else if it is not.
      */
     private static String mcpIndexByTypeCode(String javaType, String collElementKind) {
-        if (!"com.mcpdbwizard.pub.PlsqlIndexByTable2".equals(javaType)
-                && !"com.mcpdbwizard.pub.PlsqlIndexByTable".equals(javaType)) {
+        if (!mcpIsIndexByTable(javaType)) {
             return null;
         }
         if ("number".equals(collElementKind)) {
             return "oracle.jdbc.OracleTypes.NUMBER";
         }
-        if ("string".equals(collElementKind) || "timestamptz".equals(collElementKind)) {
+        if ("string".equals(collElementKind)
+                || "timestamptz".equals(collElementKind)
+                || "datetext".equals(collElementKind)
+                || "timestamptext".equals(collElementKind)
+                || "rawhex".equals(collElementKind)) {
             // A zoned timestamp rides the VARCHAR slot: the value crosses as text, and the
             // wrapper's own bindParams re-types it (setDataType(TIMESTAMPTZ), the 80-char element
             // length and ensureFractionalSeconds) before it reaches Oracle.
+            //
+            // DATE and unzoned TIMESTAMP ride it the same way, and the wrapper does the same thing
+            // for them -- setDataType(OracleTypes.DATE) / (TIMESTAMP), verified in the emitted
+            // IbaTestTestDate and IbaTestTestTimestamp, both of which ALREADY construct with
+            // VARCHAR. So this matches what the generated DAO has always built; the MCP layer was
+            // the only half that refused.
             return "oracle.jdbc.OracleTypes.VARCHAR";
         }
         return null;
@@ -6914,10 +7034,10 @@ public class SAAdminWrangler extends SADbWrangler {
                 continue;
             }
             if (position != 0 && mcpIsCollection(oracleType, javaType)) {
-                // A collection of NUMBER / VARCHAR2 crosses as a JSON array; other element types
-                // (date/RAW/record) need typed construction and stay out. A PL/SQL package array
-                // also needs the generated SQL shadow types (createExtraTypeObjects on the
-                // ServiceImpl), so it requires WEB_SERVICES.
+                // A collection of NUMBER / VARCHAR2 / DATE / TIMESTAMP / RAW crosses as a JSON
+                // array, a RAW element as base64. A PL/SQL package array also needs the generated
+                // SQL shadow types (createExtraTypeObjects on the ServiceImpl), so it requires
+                // WEB_SERVICES.
                 if (!webServicesFlag) {
                     return "parameter " + argName + " is a collection (needs WEB_SERVICES for the extra type objects)";
                 }
@@ -6931,7 +7051,7 @@ public class SAAdminWrangler extends SADbWrangler {
                             + " \"Create needed TYPE objects\" option, for the shadow types)";
                 }
                 String elementType = procParams[i].length > 6 ? procParams[i][6] : "";
-                String elementKind = mcpCollectionElementKind(elementType);
+                String elementKind = mcpCollectionElementKind(elementType, javaType);
                 if (elementKind == null) {
                     return "parameter " + argName + " is a collection whose element type (" + elementType
                             + ") is not supported";
@@ -6939,32 +7059,34 @@ public class SAAdminWrangler extends SADbWrangler {
                 // An INDEX-BY table is not a generated collection class: the wrapper types it as
                 // com.mcpdbwizard.pub.PlsqlIndexByTable2, which stores every element as either a
                 // String or a BigDecimal chosen from a single Oracle type code. It has no third
-                // representation, so a DATE or RAW element would be silently stringified and come
-                // back as something the caller did not put in. Restrict it to the two kinds the
-                // class actually models; generated collection classes keep the full element range.
+                // representation, so an element kind that is neither cannot cross here even though
+                // it crosses happily in a generated collection class, which keeps the full range.
                 if (mcpIndexByTypeCode(javaType, elementKind) == null
                         && ("com.mcpdbwizard.pub.PlsqlIndexByTable2".equals(javaType)
                             || "com.mcpdbwizard.pub.PlsqlIndexByTable".equals(javaType))) {
-                    // Name the REAL obstacle, per kind. The old message said "only NUMBER and
-                    // VARCHAR2 elements cross" and blamed PlsqlIndexByTable2 for stringifying --
-                    // a reason that retired when the TZ binding was fixed, and which would have
-                    // sent the next reader to re-derive this whole analysis from something untrue.
+                    // Name the REAL obstacle. The old message said "only NUMBER and VARCHAR2
+                    // elements cross" and blamed PlsqlIndexByTable2 for stringifying -- a reason
+                    // that retired when the TZ binding was fixed, and which would have sent the
+                    // next reader to re-derive this whole analysis from something untrue.
                     //
-                    // DATE and TIMESTAMP: the generated PL/SQL converts them with a mask that
-                    // separates date from time with a SPACE, while MCP crosses dates as ISO with a
-                    // T. A zoned element gets a textual swap on the way through (McpDates); these
-                    // would need the same, plus the fractional-second handling, and the "date"
-                    // element kind actively cannot be reused -- it yields java.util.Date objects,
-                    // which PlsqlIndexByTable2.setArray refuses with "Cannot format given Object
-                    // as a Number".
+                    // DATE, TIMESTAMP and RAW were all refused here at one time or another. None of
+                    // them is any more: each has its own TEXT element kind (see
+                    // mcpCollectionElementKind), converted to the spelling its emitted block
+                    // expects. Note what did NOT happen in any of the three -- the kind a generated
+                    // collection class uses was not reshaped to serve both. The shared "date" kind
+                    // yields java.util.Date objects that PlsqlIndexByTable2.setArray refuses with
+                    // "Cannot format given Object as a Number", and the shared "raw" kind yields a
+                    // byte[] it refuses for the same reason, while VARRAY and nested-table
+                    // collections take both happily. Reusing either would have looked right and
+                    // failed at run time.
                     //
-                    // RAW: MCP crosses binary as base64, this class carries it as hex.
-                    String theObstacle = "raw".equals(elementKind)
-                            ? "MCP crosses binary as base64 and an index-by table carries it as hex"
-                            : "the generated conversion uses a space-separated Oracle mask, not the"
-                                    + " ISO form MCP crosses dates in";
+                    // What is left is the honest residue: an element this class genuinely cannot
+                    // hold, which today means a RECORD. Any kind added without a conversion lands
+                    // here too, which is the point of naming the kind in the message.
                     return "parameter " + argName + " is an index-by table of " + elementKind
-                            + " (" + theObstacle + "). NUMBER, VARCHAR2 and zoned timestamps cross.";
+                            + " (an index-by table holds every element as a String or a BigDecimal,"
+                            + " and this kind is neither). NUMBER, VARCHAR2, DATE, TIMESTAMP"
+                            + " (zoned or not) and RAW cross.";
                 }
                 continue;
             }
@@ -7414,7 +7536,7 @@ public class SAAdminWrangler extends SADbWrangler {
             }
             boolean record = mcpIsRecord(oracleType, javaType);
             boolean collection = mcpIsCollection(oracleType, javaType);
-            String collElementKind = collection ? mcpCollectionElementKind(elementType) : null;
+            String collElementKind = collection ? mcpCollectionElementKind(elementType, javaType) : null;
             // A record's / collection's synthesized class lives in the <package>.plsql package --
             // UNLESS the type is already fully qualified, which happens for a PL/SQL index-by table
             // of a scalar: the wrapper types that as com.mcpdbwizard.pub.PlsqlIndexByTable2, a class

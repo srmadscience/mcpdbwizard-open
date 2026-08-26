@@ -173,7 +173,30 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # 33f460f and at HEAD gives 12 files GAINED, 0 LOST, and 0 file present in both whose count
 # moved. A set difference of exactly the new files is the only shape that means "additive";
 # +13 and -1 also reads as +12 and is the failure this number exists to catch.
-expect "copyright chain-of-title lines" 463 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-26: 463 -> 479. SEVENTEEN new files MINUS ONE deleted -- the RPC-level load harness
+# moving out of Scripts/ and into the app module as com.mcpdbwizard.loadtest (eleven main
+# classes, six db-free test classes), replacing Scripts/loadtest/McpLoad.java, which carried one
+# notice and is gone.
+# THE NET IS THE PART TO CHECK HERE, because this is the first entry where the number moved for
+# two reasons at once and +16 could equally be "sixteen files added" or "seventeen added and one
+# that quietly lost its header". Verified as the 2026-08-21 entry says: the set of files carrying
+# the notice differs by exactly those eighteen, each new file holds exactly ONE notice line, and
+# `git diff -G'formerly Orinda Software Ltd' --name-only` flags Scripts/loadtest/McpLoad.java and
+# nothing else -- so no surviving file's header moved.
+# 2026-08-26 (later the same day): 479 -> 480. ONE new file, one notice -- the live harness
+# TMcpIndexByDateTime, which round-trips a DATE and an unzoned TIMESTAMP index-by table through
+# the MCP text path that stopped being gated on the same day. Nothing was deleted and nothing was
+# renamed, so unlike the entry above this is a plain +1 with no netting to see through. Verified
+# the same way regardless: the new file holds exactly ONE notice line, and
+# `git diff -G'formerly Orinda Software Ltd' --name-only` lists nothing at all -- so no surviving
+# file's header moved to make up the number.
+# 2026-08-26 (third move the same day): 480 -> 483. THREE new files, one notice each -- McpBinary
+# and McpBinaryTest (the base64/hex conversion an index-by RAW needs to cross MCP, and its db-free
+# tests) and TMcpIndexByRaw, the live harness that round-trips one. Nothing deleted, nothing
+# renamed, so this is a plain +3 with no netting to see through. Verified as the entries above say
+# to: each new file holds exactly ONE notice line, and `git diff -G'formerly Orinda Software Ltd'
+# --name-only` lists nothing at all, so no surviving file's header moved to make up the number.
+expect "copyright chain-of-title lines" 483 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 

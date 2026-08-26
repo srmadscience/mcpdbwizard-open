@@ -206,4 +206,106 @@ class McpDatesTest {
         java.sql.Timestamp t = McpDates.parseTimestamp("2003-06-09T18:38:00.500");
         assertEquals("2003-06-09T18:38:00.500", McpDates.formatTimestamp(t));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // DATE and unzoned TIMESTAMP index-by elements.
+    //
+    // Every expectation below was MEASURED against Oracle 12c before it was written here, by
+    // running the mask this code targets. That order matters: the whole history of this area is
+    // wrong claims about formats that one TO_DATE call would have settled in seconds.
+    //
+    //   TO_DATE      'yyyy-mm-dd hh24:mi:ss'      36    OK  |  36.123  ORA-01830  |  bare date OK
+    //   TO_TIMESTAMP 'yyyy-mm-dd hh24:mi:ss.ff8'  36    OK  |  8 digits OK        |  9  ORA-01830
+    // ---------------------------------------------------------------------------------------
+
+    @Test
+    void dateTextSwapsTheSeparator() {
+        assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36"));
+    }
+
+    /** The one that would raise ORA-01830 if it were passed through. */
+    @Test
+    void dateTextDropsFractionalSeconds() {
+        assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36.123"));
+        assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36.123456789"));
+        assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36.0"));
+    }
+
+    /** A bare date is what the mask calls midnight, so it must arrive unpadded. */
+    @Test
+    void dateTextLeavesADateOnlyValueAlone() {
+        assertEquals("2019-03-01", McpDates.toOracleDateText("2019-03-01"));
+    }
+
+    /**
+     * A zone is NOT stripped along with the fraction. The DATE mask cannot take one either way, so
+     * the value must reach Oracle recognisable enough for its error to name what the caller sent.
+     */
+    @Test
+    void dateTextKeepsWhatFollowsTheFraction() {
+        assertEquals("2019-03-01 14:25:36+05:30",
+                McpDates.toOracleDateText("2019-03-01T14:25:36.123+05:30"));
+        assertEquals("2019-03-01 14:25:36 Asia/Calcutta",
+                McpDates.toOracleDateText("2019-03-01T14:25:36.9 Asia/Calcutta"));
+    }
+
+    @Test
+    void unzonedTimestampTextSwapsTheSeparator() {
+        assertEquals("2019-03-01 14:25:36",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36"));
+    }
+
+    /**
+     * The unzoned mask tolerates a missing fraction where the ZONED one does not -- which is why
+     * PlsqlIndexByTable2.ensureFractionalSeconds exists for that one and nothing pads for this one.
+     */
+    @Test
+    void unzonedTimestampTextDoesNotPadAMissingFraction() {
+        assertEquals("2019-03-01 14:25:36",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36"));
+        assertEquals("2019-03-01", McpDates.toOracleUnzonedTimestampText("2019-03-01"));
+    }
+
+    @Test
+    void unzonedTimestampTextKeepsUpToEightDigits() {
+        assertEquals("2019-03-01 14:25:36.1",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.1"));
+        assertEquals("2019-03-01 14:25:36.12345678",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.12345678"));
+    }
+
+    /** The ninth digit is ORA-01830, so it is cut rather than sent. */
+    @Test
+    void unzonedTimestampTextTruncatesANinthDigit() {
+        assertEquals("2019-03-01 14:25:36.12345678",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.123456789"));
+        assertEquals("2019-03-01 14:25:36.12345678",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.1234567890123"));
+    }
+
+    @Test
+    void unzonedTimestampTextTruncationKeepsWhatFollows() {
+        assertEquals("2019-03-01 14:25:36.12345678 Asia/Calcutta",
+                McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.123456789 Asia/Calcutta"));
+    }
+
+    /** Both directions, so a value survives the round trip the OUT path performs. */
+    @Test
+    void theNewFormsRoundTripBackToIso() {
+        assertEquals("2019-03-01T14:25:36",
+                McpDates.fromOracleTimestampText(McpDates.toOracleDateText("2019-03-01T14:25:36.123")));
+        assertEquals("2019-03-01T14:25:36.12345678",
+                McpDates.fromOracleTimestampText(
+                        McpDates.toOracleUnzonedTimestampText("2019-03-01T14:25:36.123456789")));
+    }
+
+    @Test
+    void theNewFormsTolerateNullAndNonsense() {
+        assertNull(McpDates.toOracleDateText(null));
+        assertNull(McpDates.toOracleUnzonedTimestampText(null));
+        assertEquals("short", McpDates.toOracleDateText("short"));
+        assertEquals("short", McpDates.toOracleUnzonedTimestampText("short"));
+        // A lone dot with no digits after it: the scan must terminate, not run off the end.
+        assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36."));
+    }
 }

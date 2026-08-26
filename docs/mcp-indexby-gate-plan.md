@@ -1,11 +1,43 @@
-# Index-by tables crossing MCP: the TZ gate (done) and DATE/RAW (open)
+# Index-by tables crossing MCP: the whole gate, and how it came down
 
 > **TZ: DONE 2026-08-21, six boxes green.** `generic_testd_mcp` went 28 → 30 tools, gaining
 > `iba_test_test_timestamp_tz` and `…_ltz`; additions only, tree compiles, db-free suites app
 > 850/0/0 and web 398/0/0, estate green on all six boxes with no propfile below its floor.
 >
-> **DATE and RAW: still gated, and this document is now mostly about them.** See
-> "What remains" — the analysis there is the reason they were NOT folded in.
+> **DATE and unzoned TIMESTAMP: DONE 2026-08-26.** `generic_testd_mcp` went 30 → 34 tools —
+> `iba_test_test_date`, `iba_test_test_timestamp`, `plsql_indexby_tables_proc_date` and
+> `plsql_indexby_tables_proc_ts` — additions only, nothing lost, tree compiles. **Note it was FOUR
+> tools, not the two this document anticipated:** `PLSQL_INDEXBY_TABLES` has its own date and
+> timestamp procedures, and a gate that hides a whole routine hides them wherever they live.
+>
+> **Six boxes green on 2026-08-26**, all 41 propfiles each: ORCL12 app 938 (base profile), XE18 /
+> ORCL19 / ORCL21 app 932 (`-Pharnesses-longids`), FREE23 / FREE26 app 945 (`-Pharnesses-23ai`),
+> web 464 on every one. `TMcpIndexByDateTime` returns **byte-identical values on all six** —
+> `.123456789` lands on `.12345700` on the 23ai line exactly as on 12c — so the truncate-then-round
+> behaviour is not version-specific.
+>
+> **RAW: DONE 2026-08-26, the same day, on a separate instruction.** `generic_testd_mcp` went
+> 34 → 36 tools — `iba_test_test_raw` and `plsql_indexby_tables_proc_raw` — additions only. **The
+> gate is now empty of Oracle scalar types:** NUMBER, VARCHAR2, DATE, TIMESTAMP zoned or not, and
+> RAW all cross an index-by table. What still refuses is a **record** element, which
+> `PlsqlIndexByTable2` genuinely cannot hold.
+>
+> **RAW also carried a latent DAO defect out with it**, found by reading rather than by a failure —
+> see "The missing guard" below. It is fixed in the same change and, honestly, is not covered by a
+> test that fails without it.
+>
+> **Six boxes green on 2026-08-26 at `d71adf4`**, all 41 propfiles each, none below its floor:
+> ORCL12 app 954 (base), XE18 / ORCL19 / ORCL21 app 948 (`-Pharnesses-longids`), FREE23 / FREE26
+> app 961 (`-Pharnesses-23ai`), web 464 on every one. The **+16** on every box is
+> `McpBinaryTest`'s 15 plus the one `TMcpIndexByRaw` harness — the same delta everywhere, so
+> nothing was traded for it. `TMcpIndexByRaw` returns byte-identical values on 12c and 26ai.
+>
+> **FILE COUNTS DID NOT MOVE, AND CANNOT — do not use them as this change's signal.** RAW crossing
+> adds two TOOLS to a server class that already existed, and the `.exists(i)` guard changes the
+> text of an emitted PL/SQL string. Neither creates a file. `generic_testd` is 119 on ORCL12 and
+> 117 on the truncating boxes both before and after. The evidence is the **tool count** (34 → 36,
+> measured on both Oracle lines) and the live round trip; the counts are there to prove nothing was
+> LOST.
 >
 > **This file was a forward plan and three of its claims were wrong.** The wrong parts are kept,
 > marked, because the first would otherwise be re-derived by whoever picks up DATE and RAW — it is
@@ -128,44 +160,108 @@ fiddly type — especially now the conversion is correct and the description say
 The alternative — leave it gated but fix the message — was done **as well**, for the kinds that are
 still gated. Even a gate that stays should not cite a defect that has been fixed.
 
-## What remains: DATE and RAW
+## What DATE and TIMESTAMP needed (done 2026-08-26)
 
-Same gate, genuinely different jobs. **Do not fold them in on the grounds that the gate is shared.**
+**The prediction in this section was right about the shape and wrong about the cost, and the reason
+is worth keeping: the DAO layer had ALREADY done the hard half, for years.** The emitted anonymous
+block converts an index-by DATE with `TO_DATE` on the way in (`CallableStatementParameterEngine`
+:7341) and `TO_CHAR` on the way out (:7624), and an unzoned TIMESTAMP with `TO_TIMESTAMP` / `TO_CHAR`
+(:7343, :7626). The generated wrapper already constructs both with `OracleTypes.VARCHAR` and calls
+`setDataType(DATE)` / `(TIMESTAMP)` in `bindParams` — read it in the emitted `IbaTestTestDate`.
+**So the MCP layer was the only half refusing**, and unlike TZ — which needed its whole binding
+project first — nothing under it had to move. Text conversion, kind, type code, description.
 
-**DATE** carries both problems at once:
+**The `date` kind was NOT reshaped, exactly as this section guessed.** `mcpCollectionElementKind`
+now takes the CONTAINER type as a parameter and answers per container: a DATE element of a generated
+VARRAY or nested table is still `"date"` and still becomes a `java.util.Date`, which those classes
+take happily; only an index-by container gets `"datetext"`. Unzoned TIMESTAMP got `"timestamptext"`
+on the index-by arm **and stays `null` everywhere else** — widening it for VARRAYs would have
+exposed a path no fixture has ever run, on the way to fixing something else.
 
-- the same mask mismatch — `ORACLE_DATE_TO_CHAR_MASK` is `"yyyy-mm-dd hh24:mi:ss"`, a space, no `T`;
-- **and** the `java.util.Date` problem above, because the existing `date` element kind is what
-  produces the object `setArray` refuses.
+**Both masks were MEASURED on 12c before a line was written**, which is this document's own standing
+instruction and which settled two things reasoning would have got wrong:
 
-So it needs its own text conversion *and* a decision about whether the `date` kind changes shape or
-a new kind appears beside it. Changing `date` affects generated VARRAY and nested-table collections,
-which accept `java.util.Date` happily today — so a new kind is likely the smaller change.
+| against its mask | `...36` | `...36.123` | 9 digits | bare date |
+|---|---|---|---|---|
+| `TO_DATE 'yyyy-mm-dd hh24:mi:ss'` | OK | **ORA-01830** | — | OK, midnight |
+| `TO_TIMESTAMP '...ss.ff8'` | **OK** | OK | **ORA-01830** | OK |
 
-**RAW** is an encoding mismatch: MCP crosses binary as base64, `PlsqlIndexByTable2` carries hex
-(`getArrayAsRaw` parses hex pairs). Small, but real emitted code both ways.
+So DATE must have any fraction **stripped** and TIMESTAMP must be **capped at eight digits** — and
+TIMESTAMP needs no padding, because the unzoned mask tolerates a missing fraction where the zoned one
+does not. That last point is why there is no counterpart to `ensureFractionalSeconds()` here.
 
-The refusal now names these rather than the retired reason:
+**Dropping a DATE's fraction is real precision loss and is deliberate.** Oracle's DATE has nowhere
+to put it, the alternative is ORA-01830 rather than fidelity, and the SCALAR date path already drops
+it silently by binding a `java.util.Date`. The emitted description says so out loud.
 
-```java
-String theObstacle = "raw".equals(elementKind)
-        ? "MCP crosses binary as base64 and an index-by table carries it as hex"
-        : "the generated conversion uses a space-separated Oracle mask, not the ISO form MCP
-           crosses dates in";
+## What RAW needed (done 2026-08-26)
+
+**The prediction in the section this replaces was right about the shape and, unusually for this
+document, right about the cost too.** RAW is an encoding mismatch where DATE and TIMESTAMP were mask
+mismatches: MCP crosses binary as base64, `PlsqlIndexByTable2` carries hex (`getArrayAsRaw` parses
+hex pairs, `setArray(byte[][])` hex-encodes). So it wanted its own conversion in both directions
+rather than a fourth text kind — and it got one, `McpBinary`, beside `McpDates` and for the same
+reason: the emitter cannot test itself.
+
+**The DAO layer had already done the hard half here as well.** The generated wrapper constructs
+`new PlsqlIndexByTable2(oracle.jdbc.OracleTypes.VARCHAR, 0)` and its `bindParams` supplies
+`setDataType(OracleTypes.RAW)` and `setElementMaxLength(80)` — twice the `RAW(40)` column, because
+hex is two characters a byte — while the emitted anonymous block already converted with `HEXTORAW`
+in and `RAWTOHEX` out. Read `IbaTestTestRaw`: every line of it predates this work. **The MCP layer
+was again the only half refusing.**
+
+**What shipped:**
+
+| | |
+|---|---|
+| `mcpCollectionElementKind` | `byte[]` in an index-by container → new kind **`rawhex`**; a generated collection class keeps **`raw`** |
+| `mcpIndexByTypeCode` | `rawhex` → `OracleTypes.VARCHAR` |
+| `toScalarObjectArray` | IN: `McpBinary.toOracleRawText` (base64 → hex) |
+| `collectionToJson` | OUT: `McpBinary.fromOracleRawText` (hex → base64), its own branch — this is the only kind here that is not a date |
+| `mcpCollectionLabel` | the caller-facing description |
+| `mcpProcUnsupportedReason` | the refusal loses its per-kind ternary: only one obstacle is left |
+
+### The one thing base64 cannot tell you, and why it is documented rather than fixed
+
+**A caller who sends hex is not refused.** `DEADBEEF` is eight characters of the base64 alphabet and
+decodes cleanly to four completely different bytes. There is no signal to key on, and sniffing for
+hex would break every value that is legitimately both — which, for short values, is most of them.
+
+That is worse here than it would be elsewhere, because **hex is the wrong guess a caller is most
+likely to make**: a RAW is shown in hex by SQL\*Plus, by a `DESCRIBE`, and by every other tool the
+caller has met it in. So the tool description says it out loud —
+`array of binary values as base64, NOT hex, e.g. 3q2+7w== for the four bytes DE AD BE EF` — and
+`McpBinaryTest.cannotTellHexFromBase64` pins the behaviour so nobody later reads it as an oversight.
+
+The decode is forgiving in the three ways that carry no ambiguity — whitespace stripped, the
+URL-safe alphabet accepted, missing `=` padding supplied — and refuses everything else with a
+message naming the accepted form, for the reason `McpDates` gives: a model handed "invalid" retries
+blind, and a retry loop against a failing tool churns pooled connections.
+
+### The missing guard
+
+**`CallableStatementParameterEngine`'s RAW arm of the OUT loop had no `.exists(i)`**, where the
+DATE, TIMESTAMP and zoned arms all did:
+
+```sql
+-- before
+FOR i IN p_out.FIRST..p_out.LAST LOOP
+ P_OUT_v(i) := RAWTOHEX(p_out(i));
+END LOOP;
 ```
 
-### Phases for that work
+An index-by table is sparse by nature — PL/SQL lets a routine assign `p_out(1)` and `p_out(7)` and
+nothing between — so a missing index raises `NO_DATA_FOUND` from inside the emitted block, naming
+neither the parameter nor the gap. Fixed to match its three siblings.
 
-1. **Red test first.** `generic_testd` already has `IBA_TEST.TEST_DATE` and `TEST_RAW`, so its
-   `_mcp` sibling gives a before/after with **no fixture change** — assert the tool exists, then
-   round-trip a value. (The original plan proposed extending the 23ai fixture; that was
-   unnecessary, and it will be unnecessary again.)
-2. **A new element kind per type**, not a reshaped `date`.
-3. **The conversion**, in `McpDates` (or a sibling for RAW) where it can be unit-tested — the
-   emitter cannot test itself, which is why the date logic moved to the runtime library at all.
-4. **The description**, naming the accepted form. Plain prose, no quotes.
-5. **Verify**: db-free suites, then the six-box estate, because it changes emitted output for every
-   `MCP_SERVER=YES` config that has such a routine.
+**Be honest about what verifies it: nothing does.** No fixture returns a sparse RAW collection.
+`IBA_TEST.TEST_RAW` is `p_out := p_in` on a dense input, and `PLSQL_INDEXBY_TABLES.PROC_RAW` fills
+`p3(1..80)` densely and then assigns `p2(3)`, which leaves `p2` dense too. So this is a fix made on
+the strength of three sibling arms doing it differently, not on a failing test — **which is exactly
+why it survived**: until this change a RAW index-by could not be published as an MCP tool at all, so
+its only caller was a hand-written DAO client whose author had read the routine. A fixture with a
+deliberately sparse OUT collection would close it properly and is worth adding if anyone touches
+this area again.
 
 ## Traps
 
@@ -174,6 +270,12 @@ String theObstacle = "raw".equals(elementKind)
 - **Two branches refuse, not one.** A null element kind refuses at the first check;
   a kind that maps to no `mcpIndexByTypeCode` refuses one branch later, with a different message.
   Adding a kind without adding its type code fails quietly in the second place.
+- **A type code without a CONVERSION is the newer version of that trap, and it fails LOUDER but
+  later.** Every text kind rides the same `OracleTypes.VARCHAR` slot, so adding one to
+  `mcpIndexByTypeCode` is enough to make the routine cross — and the emitted
+  `toScalarObjectArray` then falls through to its `String.valueOf` default and binds the caller's
+  text verbatim. Oracle rejects that if you are lucky. If the text happens to parse under the
+  mask, it is accepted as something else.
 - **Never hand `PlsqlIndexByTable2` a `java.util.Date`** — measured above.
 - **`.description(...)` does not escape.** Plain prose only.
 - **`TGen23aiMcp` asserts `tools.size() > 18`**, a lower bound — it does not need updating when the
@@ -181,6 +283,20 @@ String theObstacle = "raw".equals(elementKind)
   plan claimed the opposite on both counts.
 - **Measure the mask, do not reason about it.** Every wrong claim in this document came from
   reasoning about formats that a single `to_timestamp_tz` call would have settled in seconds.
+- **VERIFY THE ARTIFACT THE TOOL CONSUMES, NOT THE INPUT YOU CHANGED — the third variant of this
+  repository's oldest trap, hit on 2026-08-26.** Establishing the 30-tool baseline meant stashing
+  the change and regenerating. The stash worked; `git stash show --name-only` listed both files;
+  the source was provably reverted. The baseline still came back **34 tools with an identical
+  list**, i.e. "the change does nothing" — a clean, plausible, completely false result.
+  **`mvn package -DskipTests` still COMPILES the test sources**, the generated harnesses import
+  every propfile tree, the two-propfile regen had wiped them, so the build failed at test-compile,
+  the shaded jar was never re-shaded — and `testrun_current.sh` drives the shaded jar. Source,
+  `target/classes` and the jar all disagreed, and only the third one mattered. Use
+  `-Dmaven.test.skip=true`, and check the JAR (`javap -p -c` for a string that cannot exist without
+  the change) before believing any regen. What exposed it was the baseline tree containing
+  `datetext`, a string impossible without the change; without such a tell, "no difference" reads as
+  a finding. Compare with the `MCPDBWIZARD_EXTRA_CP=` that `boxes.env` silently refilled, and the
+  `git stash` that took nothing: same shape, three different places.
 
 Copyright 2003-2026 ATB Consultancy Services Ltd
 (formerly Orinda Software Ltd, Dublin, Ireland)

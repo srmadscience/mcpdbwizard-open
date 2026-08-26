@@ -210,6 +210,131 @@ public final class McpDates {
     }
 
     /**
+     * The most fractional-second digits the unzoned Oracle TIMESTAMP mask will match.
+     *
+     * <p>Eight, because {@link com.mcpdbwizard.pub.PlsqlIndexByTable2#ORACLE_TIMESTAMP_TO_CHAR_MASK}
+     * ends {@code .ff8}. Measured on 12c: one to eight digits are accepted, nine raises ORA-01830.
+     */
+    private static final int MAX_UNZONED_FRACTION_DIGITS = 8;
+
+    /**
+     * ISO text to the form the Oracle DATE mask matches, for a DATE index-by element crossing MCP.
+     *
+     * <p>Two differences from {@link #toOracleTimestampText}, both MEASURED against 12c rather than
+     * reasoned about — which is the rule this area exists under, every wrong claim in its history
+     * having come from reasoning about a format that one {@code TO_DATE} call would have settled:
+     *
+     * <ul>
+     * <li>the {@code T} becomes a space, exactly as it does for a zoned timestamp; and</li>
+     * <li><b>any fractional seconds are REMOVED.</b>
+     * {@link com.mcpdbwizard.pub.PlsqlIndexByTable2#ORACLE_DATE_TO_CHAR_MASK} is
+     * {@code 'yyyy-mm-dd hh24:mi:ss'} with no {@code FF} element, and
+     * {@code TO_DATE('2019-03-01 14:25:36.123', ...)} raises <b>ORA-01830</b>.</li>
+     * </ul>
+     *
+     * <p>A bare {@code '2019-03-01'} is accepted by that mask and means midnight, so a date-only
+     * value needs no padding and gets none.
+     *
+     * <p><b>Dropping the fraction loses precision, and that is deliberate.</b> An Oracle DATE has
+     * no sub-second component to store it in, so the alternative is not fidelity but ORA-01830 —
+     * and the SCALAR date path already drops it silently, by binding a {@link java.util.Date} that
+     * Oracle truncates on arrival. Refusing here would make an index-by DATE stricter than a plain
+     * DATE parameter beside it, for nothing. The emitted tool description says so out loud, because
+     * an accepted spelling that a caller cannot discover is precisely the defect a live MCP session
+     * reported against this area once already.
+     *
+     * <p>Nothing else is touched. A value carrying a zone, or one that is not a timestamp at all,
+     * is passed through to be refused by Oracle in Oracle's own words rather than quietly reshaped
+     * into something that parses — the same division of labour
+     * {@link com.mcpdbwizard.pub.PlsqlIndexByTable2#ensureFractionalSeconds()} keeps.
+     *
+     * @param theIsoText the caller's value, or null
+     * @return the same value in the form the DATE mask accepts
+     * @since 2.0.6
+     */
+    public static String toOracleDateText(String theIsoText) {
+        String theText = toOracleTimestampText(theIsoText);
+
+        if (theText == null) {
+            return null;
+        }
+
+        int theDot = theText.indexOf('.', 10);
+
+        if (theDot < 0) {
+            return theText;
+        }
+
+        // Whatever follows the digits -- a zone, trailing text -- is KEPT, so that a value this
+        // mask cannot take still reaches Oracle recognisably rather than half-repaired.
+        return theText.substring(0, theDot) + theText.substring(endOfFraction(theText, theDot));
+    }
+
+    /**
+     * ISO text to the form the unzoned Oracle TIMESTAMP mask matches.
+     *
+     * <p>The {@code T} becomes a space, and a fraction longer than
+     * {@value #MAX_UNZONED_FRACTION_DIGITS} digits is truncated. Measured on 12c against
+     * {@code 'yyyy-mm-dd hh24:mi:ss.ff8'}: a MISSING fraction is accepted, one to eight digits are
+     * accepted, and nine raises ORA-01830.
+     *
+     * <p><b>That first point is why there is no counterpart to
+     * {@link com.mcpdbwizard.pub.PlsqlIndexByTable2#ensureFractionalSeconds()} here.</b> That
+     * method exists because the ZONED mask stops tolerating a missing fraction once it names a
+     * zone; the unzoned mask never stopped, so padding would be work with no effect.
+     *
+     * <p>Truncating rather than refusing, because a caller sending a ninth digit is already sending
+     * more precision than the column will keep: Oracle's TIMESTAMP tops out at 9 and DEFAULTS to 6,
+     * and rounds {@code .12345678} to {@code .123457} on arrival whatever we hand it.
+     *
+     * @param theIsoText the caller's value, or null
+     * @return the same value in the form the unzoned TIMESTAMP mask accepts
+     * @since 2.0.6
+     */
+    public static String toOracleUnzonedTimestampText(String theIsoText) {
+        String theText = toOracleTimestampText(theIsoText);
+
+        if (theText == null) {
+            return null;
+        }
+
+        int theDot = theText.indexOf('.', 10);
+
+        if (theDot < 0) {
+            return theText;
+        }
+
+        int theEnd = endOfFraction(theText, theDot);
+
+        if (theEnd - theDot - 1 <= MAX_UNZONED_FRACTION_DIGITS) {
+            return theText;
+        }
+
+        return theText.substring(0, theDot + 1 + MAX_UNZONED_FRACTION_DIGITS) + theText.substring(theEnd);
+    }
+
+    /**
+     * One past the last digit of the fractional-seconds run starting at {@code theDot}.
+     *
+     * <p>Scans DIGITS only, so anything after them -- a space and a zone, or trailing rubbish -- is
+     * found rather than consumed, and the callers above can preserve it.
+     *
+     * @param theText the value being examined
+     * @param theDot  the index of the decimal point
+     * @return the index one past the fraction, which is {@code theDot + 1} when no digit follows
+     */
+    private static int endOfFraction(String theText, int theDot) {
+        int theEnd = theDot + 1;
+
+        while (theEnd < theText.length()
+                && theText.charAt(theEnd) >= '0' && theText.charAt(theEnd) <= '9') {
+            theEnd++;
+        }
+
+        return theEnd;
+    }
+
+    /**
      * Read one of the accepted forms.
      *
      * @param theValue the caller's value; {@code toString} is used, so a JSON string arrives here

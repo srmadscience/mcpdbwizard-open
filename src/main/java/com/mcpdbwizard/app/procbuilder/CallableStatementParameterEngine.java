@@ -7653,7 +7653,23 @@ public class CallableStatementParameterEngine {
                                             + ORACLE_NINES.substring(0, actualPlaces) + "'));");
                                 }
                             } else if (plsqlIndexByDataType[i] == OracleTypes.RAW) {
-                                plsqlText.add(" " + plsqlIndexByPlaceHolderVarName[i] + "(i) := RAWTOHEX(" + argName + "(i));");
+                                // .exists(i), like the DATE / TIMESTAMP / zoned arms above -- and
+                                // UNLIKE this one until 2026-08-26. An index-by table is sparse by
+                                // nature: PL/SQL lets a routine assign p_out(1) and p_out(7) and
+                                // nothing between, while this loop walks FIRST..LAST, so reading a
+                                // missing index raises NO_DATA_FOUND from inside the emitted block
+                                // -- an error naming neither the parameter nor the gap.
+                                //
+                                // It survived because nothing reached it. No fixture returns a
+                                // sparse RAW collection, and until the same day as this comment a
+                                // RAW index-by could not be published as an MCP tool at all, so the
+                                // only caller was a hand-written DAO client whose author had read
+                                // the routine. Found by reading the three sibling arms rather than
+                                // by a failure, which is why the fix arrives without a test that
+                                // fails before it: writing one needs a fixture with a deliberately
+                                // sparse OUT collection, and generic_testd's test_raw does
+                                // p_out := p_in on a dense input.
+                                plsqlText.add(" IF " + argName + ".exists(i) THEN " + plsqlIndexByPlaceHolderVarName[i] + "(i) := RAWTOHEX(" + argName + "(i)); END IF;");
                             }
                             plsqlText.add("END LOOP;");
                         }
