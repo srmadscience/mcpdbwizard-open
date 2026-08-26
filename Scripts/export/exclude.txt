@@ -40,6 +40,8 @@ repo/
 prototypes/
 legacy/
 Scripts/boxes.env
+# The leak gate's own private pattern list -- it must not travel with the gate.
+Scripts/export/denylist-private.txt
 
 # --- test-schema DDL ---------------------------------------------------------
 # NOT NEGOTIABLE, and the reason is not tidiness: sql/ and OtherDbs/ are not only our own

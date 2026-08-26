@@ -1,0 +1,38 @@
+# PRIVATE companion to denylist.txt. GITIGNORED AND NEVER EXPORTED.
+#
+# Same format: one extended-regex per line, '#' comments and blank lines ignored.
+# check-export-clean.sh reads this file AND denylist.txt as one list and fails the
+# export on any hit.
+#
+# WHY THIS FILE EXISTS SEPARATELY. denylist.txt ships. A pattern that names a third
+# party's schema would therefore publish, in the public repository, the very string the
+# pattern exists to keep out of it -- the same reason Scripts/export/exclude.txt names
+# no private path and the repository's own notes carry the list instead.
+#
+# WHAT GOES HERE: a name that is somebody ELSE'S to disclose. Table, package, schema and
+# product names carried over from customer work.
+#
+# WHAT DOES NOT: anything of ours. DBHELL, the access code and our host names stay in the
+# public denylist, where they keep that file self-explanatory and cost nothing.
+#
+# When a hit is legitimate, FIX THE FILE -- do not loosen a pattern here. That rule is
+# the whole value of a gate that refuses rather than a scrubber that rewrites.
+
+# --- third-party schema and table names -------------------------------------
+# Carried over from customer work. Structure only, never data -- but a table layout is
+# still that organisation's, and a push cannot be retracted.
+# <one extended-regex per line; see the private notes for the actual names>
+# <one extended-regex per line; see the private notes for the actual names>
+# --- third-party schema and table names -------------------------------------
+# One extended-regex per line. The actual names are NOT in this template, for the same
+# reason they are not in denylist.txt: a template ships too.
+#
+# Take them from the repository's own private notes, which carry the list and the
+# reasoning for it. Write each as a character class ([Ll][Ss]...) so the gate's `grep -E`
+# matches whatever case the name appears in.
+#
+# A KNOWN, ACCEPTED EXCEPTION, so nobody adds it here and wonders why the export breaks:
+# the BFILE FILENAME in Scripts/provisioning/CheckProvisioning.java. That script ships on
+# purpose -- it asks the DATABASE which objects a config names, never reads sql/, and is
+# the natural starting point for a contributor building their own schema. A filename is
+# not a schema layout. Add a pattern for it and every export fails.

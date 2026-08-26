@@ -38,6 +38,24 @@ for arg in "$@"; do
     esac
 done
 DENYLIST="$SCRIPT_DIR/denylist.txt"
+# The PRIVATE companion. denylist.txt ships, so it cannot name a third party's schema:
+# an exclusion list that enumerates what it protects publishes the index it exists to
+# withhold, which is the rule Scripts/export/exclude.txt already follows and the reason
+# the naming lives in the repository's own private notes instead.
+#
+# Names of OURS -- our test schema, the access code, our host names -- stay in the public
+# file: publishing those costs nothing and keeps the gate self-explanatory. What belongs
+# here is a name that is somebody else's to disclose.
+#
+# NOTE THIS COMMENT SPELLS NONE OF THEM, and that is not squeamishness: THIS FILE SHIPS.
+# A literal denied name written here matches the very pattern it is describing, and every
+# future export fails on the gate's own source. Caught exactly that way, one minute after
+# the first draft of this comment was written.
+#
+# It is REQUIRED, not optional, and that is deliberate. Made optional, a fresh checkout
+# without it would run a narrower check and still print PASSED -- a check narrower than
+# the thing it certifies is worse than none, because its answer gets believed.
+DENYLIST_PRIVATE="$SCRIPT_DIR/denylist-private.txt"
 
 if [ ! -d "$TREE" ]; then
     echo "ERROR: no such tree: $TREE" >&2
@@ -47,11 +65,21 @@ if [ ! -f "$DENYLIST" ]; then
     echo "ERROR: no denylist at $DENYLIST" >&2
     exit 2
 fi
+if [ ! -f "$DENYLIST_PRIVATE" ]; then
+    echo "ERROR: no private denylist at $DENYLIST_PRIVATE" >&2
+    echo "       It is gitignored on purpose -- it holds third-party schema names, which" >&2
+    echo "       cannot live in denylist.txt because that file ships. Copy" >&2
+    echo "       denylist-private.txt.template and fill it in from the private notes." >&2
+    echo "       This is a hard failure rather than a skip: a gate that quietly checks" >&2
+    echo "       less than it claims is worse than no gate at all." >&2
+    exit 2
+fi
 
 echo "=================================================================="
 echo "  export leak check"
 echo "  tree     : $TREE"
 echo "  denylist : $DENYLIST"
+echo "             $DENYLIST_PRIVATE (private, $(grep -cvE '^\s*(#|$)' "$DENYLIST_PRIVATE") pattern(s))"
 echo "=================================================================="
 
 hits=0
@@ -77,13 +105,19 @@ EXCLUDE_FILES=$(sed -n 's|^\([A-Za-z][^/]*/.*[^/]\)$|\1|p' "$SCRIPT_DIR/exclude.
 
 files=$(find "$TREE" \
     -type d \( $prune \) -prune -o \
-    -type f -print 2>/dev/null | grep -v '/Scripts/export/denylist.txt$')
+    -type f -print 2>/dev/null | grep -vE '/Scripts/export/denylist(-private)?\.txt$')
 
 for ef in $EXCLUDE_FILES; do
     files=$(echo "$files" | grep -vF "/$ef" || true)
 done
 
 # ---- 1. denylist patterns --------------------------------------------------
+# Both lists, read as one. A hit reports the PATTERN, which for a private name means the
+# name reaches the terminal -- that is fine and unavoidable, since the operator has to be
+# told what to fix. What must not happen is the name reaching a file that ships.
+DENYLIST_ALL=$(mktemp)
+cat "$DENYLIST" "$DENYLIST_PRIVATE" > "$DENYLIST_ALL"
+
 while IFS= read -r pattern; do
     case "$pattern" in
         ''|\#*) continue ;;
@@ -100,7 +134,8 @@ while IFS= read -r pattern; do
         fi
         hits=$((hits + count))
     fi
-done < "$DENYLIST"
+done < "$DENYLIST_ALL"
+rm -f "$DENYLIST_ALL"
 
 # ---- 2. stray jars ---------------------------------------------------------
 jars=$(echo "$files" | grep -E '\.jar$' || true)

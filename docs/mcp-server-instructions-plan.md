@@ -59,7 +59,7 @@ Per-**tool** text is already authorable, through four key families that round-tr
 So an author can explain each tool and cannot say a word about the schema as a whole — yet
 `instructions` is what a model reads **first**, before any tool. For a schema with names chosen by
 someone else years ago, the tools can be described perfectly while the server still opens with
-`Exposes row CRUD on table(s) LSVIELM_AST_INST, OSOFTBQ`.
+`Exposes row CRUD on table(s) GLELM_AST_INST, WRKBQ`.
 
 What is missing is the part only a human knows: what this schema is *for*, which objects relate to
 which, and what an agent should not attempt even though a tool exists for it.
