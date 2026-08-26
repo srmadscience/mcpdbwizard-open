@@ -107,8 +107,13 @@ files=$(find "$TREE" \
     -type d \( $prune \) -prune -o \
     -type f -print 2>/dev/null | grep -vE '/Scripts/export/denylist(-private)?\.txt$')
 
+# ANCHORED AT THE END, and that is not pedantry -- it was a live blind spot. grep -vF
+# matches a SUBSTRING, so excluding `Scripts/export/denylist-private.txt` also excluded
+# `Scripts/export/denylist-private.txt.template`, a DIFFERENT file that really does ship.
+# The template went unscanned and carried a denied name into the export; the gate reported
+# PASSED. Any excluded filename that is a PREFIX of another has the same effect.
 for ef in $EXCLUDE_FILES; do
-    files=$(echo "$files" | grep -vF "/$ef" || true)
+    files=$(echo "$files" | grep -vE "/$(printf '%s' "$ef" | sed 's|[].[^$*\/]|\\&|g')\$" || true)
 done
 
 # ---- 1. denylist patterns --------------------------------------------------

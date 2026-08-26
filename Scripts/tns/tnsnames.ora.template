@@ -46,7 +46,7 @@ FREE23 =
     (CONNECT_DATA = (SERVICE_NAME = FREEPDB1))
   )
 
-# Oracle 26ai Free box (23.26.0.0.0), host kolcheck-26. Second 26ai instance
+# Oracle 26ai Free box (23.26.0.0.0). Second 26ai instance
 # alongside FREE23. Like the 2026-07 boxes it has NO /export/data tree and no SSH
 # access, so testdata.sh maps its datafile dir to the PDB's own oradata dir
 # (/opt/oracle/oradata/FREE/FREEPDB1) and uses the no-SSH BFILE fixup path.
