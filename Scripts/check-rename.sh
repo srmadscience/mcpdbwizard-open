@@ -218,7 +218,13 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # scrape port. A plain +1, predicted before the gate ran and then verified as a set difference:
 # `git diff -G'formerly Orinda Software Ltd' --name-only` since the last passing commit lists that
 # one file and nothing else, so no surviving header moved to make up the number.
-expect "copyright chain-of-title lines" 489 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-27 (fifth move today): 489 -> 493. FOUR new files, one notice each -- RunThisFileLauncher
+# (adopt and run a config named by MCPDBWIZARD_RUN_THIS_FILE) with RunThisFileAdoptionTest,
+# UploadSavesTheConfigTest, and WellKnownIsUnauthenticatedTest. A plain +4, predicted before the
+# gate ran and verified as a set difference after: `git diff -G'formerly Orinda Software Ltd'
+# --name-only` since the last passing commit lists those four and nothing else, so no surviving
+# header moved to make up the number.
+expect "copyright chain-of-title lines" 493 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 
