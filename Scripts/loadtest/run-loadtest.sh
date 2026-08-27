@@ -3,7 +3,7 @@
 # run-loadtest.sh -- load-test a PUBLISHED MCPDBWizard image, end to end, from a cold start.
 #
 #   ./run-loadtest.sh                             pull the default image, start it, run the workload
-#   ./run-loadtest.sh --image ...:2.0.5            a different image
+#   ./run-loadtest.sh --image ...:2.0.8            pin a version, to compare two releases
 #   ./run-loadtest.sh --for 5m --rate 200          pass anything through to the load client
 #   ./run-loadtest.sh --list                       what does this config publish?
 #   ./run-loadtest.sh --proxy                      through /mcp/<config> instead of the direct port
@@ -49,7 +49,17 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-IMAGE="${MCPDBWIZARD_IMAGE:-ghcr.io/srmadscience/mcpdbwizard:2.0.8}"
+# :latest, NOT a pinned version. This default was 2.0.6 and went stale, was corrected to 2.0.8 and
+# went stale again within a day -- a hardcoded version is one more thing every release has to
+# remember, and the one that forgets is this file, because nothing fails when it is wrong. It just
+# quietly measures an old image.
+#
+# The stale-:latest trap does not apply HERE, and that is the point: this script always `docker
+# pull`s before it runs, so it gets whatever the registry currently calls latest. The trap catches
+# `docker run :latest`, which never pulls.
+#
+# Pass --image to pin a version deliberately, which is what you want when comparing two releases.
+IMAGE="${MCPDBWIZARD_IMAGE:-ghcr.io/srmadscience/mcpdbwizard:latest}"
 CONTAINER="${CONTAINER:-mcpdbwizard-load}"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 CONFIG="${CONFIG:-mcpdemo}"
@@ -107,7 +117,8 @@ fi
 echo "=== credential gate (one login, before anything starts) ==="
 PROBE_SRC="$(dirname "$0")/DbProbe.java"
 [ -f "$PROBE_SRC" ] || { echo "missing $PROBE_SRC" >&2; exit 2; }
-docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "pulling $IMAGE"; docker pull -q "$IMAGE"; }
+# Always, not only when absent: a cached :latest is exactly what this default exists to avoid.
+docker pull -q "$IMAGE" > /dev/null 2>&1 || true
 set +e
 PROBE_OUT=$(docker run --rm --env-file "$ENV_FILE" \
     -v "$(cd "$(dirname "$PROBE_SRC")" && pwd)/DbProbe.java:/tmp/DbProbe.java:ro" \
@@ -143,6 +154,9 @@ else
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     echo "pulling $IMAGE"
     docker pull -q "$IMAGE"
+    # Report the DIGEST as well as the tag. A result recorded against ":latest" names nothing a
+    # week later, and comparing two runs is most of what this tool is for.
+    echo "  image: $(docker image inspect "$IMAGE" --format '{{index .RepoDigests 0}}' 2>/dev/null || echo "$IMAGE")"
     echo "starting $CONTAINER"
     # MCP_METRICS_HOST is set here as well as published: a generated server binds 127.0.0.1 by
     # default, so publishing the port alone forwards to a socket not on the external interface
