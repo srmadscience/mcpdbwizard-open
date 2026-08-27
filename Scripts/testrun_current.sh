@@ -79,7 +79,14 @@ ORACLE_VERSION=12.1.0      # value written into each .pb2's ORACLE_VERSION field
 # Local box inventory (gitignored; see boxes.env.template). Sourced for its DEFAULTS
 # only -- an environment variable set by the caller always wins, because every
 # assignment in that file is of the ${VAR:-default} form.
-BOXES_ENV="$(cd "$(dirname "$0")" && pwd)/boxes.env"
+# $SCRIPT_DIR, not a fresh $(dirname "$0"): this line runs AFTER the cd to $HOMEDIR above, so
+# re-deriving it from a RELATIVE invocation resolves against the wrong directory. Invoked as
+# `app/Scripts/testrun_current.sh` from the repo root it printed
+#   cd: app/Scripts: No such file or directory
+# and then "ERROR: no test schema credentials" -- an error about the CREDENTIALS for a fault in the
+# PATH, which is why it has been mistaken twice for a missing boxes.env. $SCRIPT_DIR was already
+# resolved absolutely at the top, before anything moved.
+BOXES_ENV="$SCRIPT_DIR/boxes.env"
 [ -f "$BOXES_ENV" ] && . "$BOXES_ENV"
 HOST=${MCPDBWIZARD_TEST_HOST:-${ORINDA_TEST_HOST:-}}
 PORT=${MCPDBWIZARD_TEST_PORT:-${ORINDA_TEST_PORT:-1521}}

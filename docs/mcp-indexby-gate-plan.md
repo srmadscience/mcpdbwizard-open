@@ -238,7 +238,26 @@ URL-safe alphabet accepted, missing `=` padding supplied — and refuses everyth
 message naming the accepted form, for the reason `McpDates` gives: a model handed "invalid" retries
 blind, and a retry loop against a failing tool churns pooled connections.
 
-### The missing guard
+### The missing guard — CLOSED 2026-08-27, and RAW was not the only one
+
+> **`NUMBER` had no guard either, in both its branches**, found by measuring the arms rather than
+> re-reading this section. It matters more than RAW did: a NUMBER index-by only reaches this
+> conversion when it does not ride the numeric slot, which a high-precision `number(30,15)` does —
+> an ordinary type, unlike the RAW that led here. So if the sparse case has ever bitten a real
+> caller, it bit there.
+>
+> **`IBA_TEST.TEST_SPARSE` is the fixture this section said was missing.** One procedure, six OUT
+> collections, indexes 1 and 7 only. Proved in both directions on a live 12c box: guard removed →
+> `ORA-01403`, guard restored → succeeds. **Six boxes green at `b618ce6`** — ORCL12 app 955, XE18 /
+> ORCL19 / ORCL21 949, FREE23 / FREE26 962, web 470 everywhere, `TSparseIndexBy` passing on all six
+> with no skips.
+>
+> **The sparseness SURVIVES, which was not assumed.** Values come back at positions 1 and 7 with
+> the gaps empty, not compacted to the front — on both Oracle lines. Had they compacted, the guard
+> would have prevented an error while silently corrupting the index mapping, which is worse than
+> the exception it replaced.
+
+
 
 **`CallableStatementParameterEngine`'s RAW arm of the OUT loop had no `.exists(i)`**, where the
 DATE, TIMESTAMP and zoned arms all did:

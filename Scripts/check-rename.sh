@@ -210,7 +210,10 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # was worked out BEFORE the gate ran and matched what it reported. That is the check: predicting the
 # number and then verifying it file by file are different acts, and only the second one catches a
 # file that arrived with no notice at all.
-expect "copyright chain-of-title lines" 487 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-27 (third move today): 487 -> 488. ONE new file, one notice -- TSparseIndexBy, the live
+# harness for a SPARSE index-by OUT collection. A plain +1, expected before the gate ran and
+# verified file by file after, which is the rule the DbProbe.java entry above exists to enforce.
+expect "copyright chain-of-title lines" 488 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 

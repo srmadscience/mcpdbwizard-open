@@ -7643,14 +7643,22 @@ public class CallableStatementParameterEngine {
                                     actualPlaces = 0;
                                 }
 
+                                // .exists(i), like every other arm in this loop. This one was the
+                                // LAST to get it and is the one most likely to have bitten someone:
+                                // a NUMBER index-by only reaches this conversion at all when it does
+                                // NOT ride the numeric slot -- a high-precision number(30,15) does
+                                // -- so it is an ordinary type, unlike the RAW that led here.
+                                // Without the guard a sparse OUT collection raises NO_DATA_FOUND
+                                // from inside the emitted block, naming neither the parameter nor
+                                // the gap. See IBA_TEST.TEST_SPARSE and TSparseIndexBy.
                                 if (actualPlaces <= 0) {
-                                    plsqlText.add(" " + plsqlIndexByPlaceHolderVarName[i] + "(i) := LTRIM(TO_CHAR(" + argName + "(i),'"
-                                            + ORACLE_NINES.substring(0, actualLength) + "'));");
+                                    plsqlText.add(" IF " + argName + ".exists(i) THEN " + plsqlIndexByPlaceHolderVarName[i] + "(i) := LTRIM(TO_CHAR(" + argName + "(i),'"
+                                            + ORACLE_NINES.substring(0, actualLength) + "')); END IF;");
                                 } else {
-                                    plsqlText.add(" " + plsqlIndexByPlaceHolderVarName[i] + "(i) := LTRIM(TO_CHAR(" + argName + "(i),'"
+                                    plsqlText.add(" IF " + argName + ".exists(i) THEN " + plsqlIndexByPlaceHolderVarName[i] + "(i) := LTRIM(TO_CHAR(" + argName + "(i),'"
                                             + ORACLE_NINES.substring(0, actualLength)
                                             + "."
-                                            + ORACLE_NINES.substring(0, actualPlaces) + "'));");
+                                            + ORACLE_NINES.substring(0, actualPlaces) + "')); END IF;");
                                 }
                             } else if (plsqlIndexByDataType[i] == OracleTypes.RAW) {
                                 // .exists(i), like the DATE / TIMESTAMP / zoned arms above -- and

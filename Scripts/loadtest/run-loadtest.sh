@@ -2,7 +2,7 @@
 #
 # run-loadtest.sh -- load-test a PUBLISHED MCPDBWizard image, end to end, from a cold start.
 #
-#   ./run-loadtest.sh                             pull 2.0.6, start it, run the default workload
+#   ./run-loadtest.sh                             pull the default image, start it, run the workload
 #   ./run-loadtest.sh --image ...:2.0.5            a different image
 #   ./run-loadtest.sh --for 5m --rate 200          pass anything through to the load client
 #   ./run-loadtest.sh --list                       what does this config publish?
@@ -49,14 +49,14 @@
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
-IMAGE="${MCPDBWIZARD_IMAGE:-ghcr.io/srmadscience/mcpdbwizard:2.0.6}"
+IMAGE="${MCPDBWIZARD_IMAGE:-ghcr.io/srmadscience/mcpdbwizard:2.0.8}"
 CONTAINER="${CONTAINER:-mcpdbwizard-load}"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 CONFIG="${CONFIG:-mcpdemo}"
 VOLUME="${VOLUME:-mcpdbwizard-demo}"
 WEB_PORT="${WEB_PORT:-8080}"
 METRICS_PORT="${METRICS_PORT:-9464}"
-WORKLOAD="${WORKLOAD:-$(dirname "$0")/workload-$CONFIG.json}"
+WORKLOAD="${WORKLOAD:-}"
 KEEP=no
 PROXY=no
 ARGS=()
@@ -75,6 +75,29 @@ while [ $# -gt 0 ]; do
         *)           ARGS+=("$1"); shift ;;
     esac
 done
+
+# AFTER the argument loop, not before it: derived from whatever --config finally says. Computed
+# up with the other defaults it was bound to the DEFAULT config, so `--config mine` silently kept
+# looking for workload-mcpdemo.json -- a workload for somebody else's schema, whose tool names
+# would then be refused by the pre-run check as if the caller had mistyped them.
+WORKLOAD="${WORKLOAD:-$(dirname "$0")/workload-$CONFIG.json}"
+
+# Does this invocation actually need a workload? --list and --tools do not, and --list is the
+# FIRST thing anyone runs against a config they have not written one for yet -- so demanding the
+# file unconditionally would break the one command that tells you how to write it.
+# ${ARGS[*]}, NOT $* -- the argument loop above has already shifted $@ empty, so testing $* here
+# matches nothing and refuses --list, the one command this guard exists to point people at.
+NEEDS_WORKLOAD=yes
+case " ${ARGS[*]} " in
+    *" --list "*|*" --tools "*) NEEDS_WORKLOAD=no ;;
+esac
+if [ "$NEEDS_WORKLOAD" = yes ] && [ ! -f "$WORKLOAD" ]; then
+    echo "no workload at $WORKLOAD" >&2
+    echo "  Write one for this config, or point at another with --workload." >&2
+    echo "  Start with:  $0 --config $CONFIG --list" >&2
+    echo "  That prints every published tool WITH a ready-made workload entry to paste." >&2
+    exit 2
+fi
 
 [ -f "$ENV_FILE" ] || { echo "no env file at $ENV_FILE -- see docker-compose.yml for the settings it needs" >&2; exit 2; }
 
@@ -149,9 +172,16 @@ docker logs "$CONTAINER" 2>&1 | grep -m1 'Oracle connection configured' || true
 # will have us, not that the generated server came up or that its tools bind.
 echo
 echo "=== smoke test (one tool call) ==="
-SMOKE=$(CONTAINER="$CONTAINER" "$(dirname "$0")/mcp-load.sh" --config "$CONFIG" \
-            --tools "$(sed -n 's/.*"tool"[ ]*:[ ]*"\([a-z0-9_]*\)".*/\1/p' "$WORKLOAD" | head -1)" \
-            --calls 1 --threads 1 2>&1 || true)
+SMOKE_TOOL=
+[ -f "$WORKLOAD" ] && SMOKE_TOOL=$(sed -n 's/.*"tool"[ ]*:[ ]*"\([a-z0-9_]*\)".*/\1/p' "$WORKLOAD" | head -1)
+if [ -n "$SMOKE_TOOL" ]; then
+    SMOKE=$(CONTAINER="$CONTAINER" "$(dirname "$0")/mcp-load.sh" --config "$CONFIG" \
+                --tools "$SMOKE_TOOL" --calls 1 --threads 1 2>&1 || true)
+else
+    # No workload yet: tools/list still proves the server came up and answers.
+    SMOKE=$(CONTAINER="$CONTAINER" "$(dirname "$0")/mcp-load.sh" --config "$CONFIG" \
+                --list 2>&1 || true)
+fi
 if echo "$SMOKE" | grep -qi 'tool error\|errors 1'; then
     echo "$SMOKE" | grep -i 'tool error' | head -2
     cat >&2 <<'MSG'
