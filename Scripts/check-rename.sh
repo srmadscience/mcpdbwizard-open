@@ -204,7 +204,13 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # it only sees a sum that moved -- so the delta has to be checked FILE BY FILE, which is what the
 # 2026-08-21 entry means by verifying a set difference rather than a direction. Doing that found
 # the omission; re-pinning to 484 would have locked it in and called it correct.
-expect "copyright chain-of-title lines" 485 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-27 (later): 485 -> 487. TWO new files, one notice each -- the web module's
+# VersionControllerAdvice and its VersionOnEveryPageTest, for the version shown on the login screen
+# and in the banner. A plain +2 with nothing netting out, and unlike the entry above the arithmetic
+# was worked out BEFORE the gate ran and matched what it reported. That is the check: predicting the
+# number and then verifying it file by file are different acts, and only the second one catches a
+# file that arrived with no notice at all.
+expect "copyright chain-of-title lines" 487 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 
