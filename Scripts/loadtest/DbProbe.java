@@ -1,4 +1,10 @@
 // One JDBC login, then exit. Nothing else -- no pool, no retry, no server.
+//
+// Run by single-file source launch inside a throwaway container, so it is deliberately
+// dependency-free beyond the ojdbc the image already carries. See Scripts/loadtest/run-loadtest.sh.
+//
+// Copyright 2003-2026 ATB Consultancy Services Ltd
+// (formerly Orinda Software Ltd, Dublin, Ireland)
 import java.sql.*;
 import java.nio.file.*;
 

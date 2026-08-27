@@ -1,6 +1,17 @@
 # TZ index-by collections lose the time zone — plan
 
-> **OPEN, not started.** Diagnosis re-measured end to end on 2026-08-20 against a 12c server and a
+> **DONE. All phases, six boxes green on 2026-08-26 at `d71adf4`** — `TTzIndexBy` passes on
+> ORCL12, XE18, ORCL19, ORCL21, FREE23 and FREE26, round-tripping `+05:30` and `Asia/Calcutta`
+> intact through the same procedure on both Oracle lines.
+>
+> **THIS BANNER SAID "OPEN, NOT STARTED" FOR A WEEK AFTER THE WORK LANDED**, while the Progress
+> section eight screens below said "Phases 0-4 are DONE". On 2026-08-27 that contradiction was
+> read top-down and produced a recommendation to redo finished work; it was caught only by
+> grepping `SqlUtils` for the abbreviated spelling. **A status line is worth exactly what the code
+> says it is** — see the fourth entry in the stale-plan-doc-status record. The remainder of this
+> file is the diagnosis and the disproved approaches, which are the part worth keeping.
+>
+> Diagnosis re-measured end to end on 2026-08-20 against a 12c server and a
 > 23ai-line server. **The 2026-08-15 diagnosis this file used to carry was wrong in its central
 > claim** — see "Corrections" below before reading anything else, and before quoting the matching
 > paragraph in `CLAUDE.md`.
@@ -149,7 +160,9 @@ regression signal.**
 
 ## Progress
 
-Phases 0-4 are **DONE** (2026-08-20); Phase 5 is the estate verification and is what remains.
+**ALL PHASES DONE.** 0-4 landed 2026-08-20; the estate verification completed 2026-08-26 at
+`d71adf4` — `TTzIndexBy` green on all six boxes (ORCL12, XE18, ORCL19, ORCL21, FREE23,
+FREE26), run as part of the full suite rather than as a separate exercise.
 
 | | | |
 |---|---|---|

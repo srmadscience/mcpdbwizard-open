@@ -8,9 +8,31 @@ that actually exists — a server on a trusted host driven by one client — but
 on a network. Notably, three of the seven findings were configuration choices rather than missing
 features.
 
-Two findings are fixed (§2). One was reviewed and **deliberately accepted** (§3.1). Four remain open
-(§3.2–§3.5); each needs a decision about the product, not an edit, which is why none of them was
-quietly implemented.
+**STATUS, RE-VERIFIED AGAINST THE CODE 2026-08-27 — this paragraph said "four remain open" for
+weeks after all four had shipped.** Every §3 section heading already read ADDED / IMPLEMENTED /
+RESOLVED / ADDRESSED while this line above them said otherwise, and a summary is what gets quoted.
+The check is a grep, not a reading: `EnvironmentSecret` and `DbPasswordSource` (§3.2), `MCP_OAUTH`
+(§3.3), `McpAuditSink` / `FileAuditSink` / `FanOutAuditSink` (§3.4), `McpHttpPolicy`'s
+`MCP_ALLOW_UNAUTHENTICATED_EXPOSURE` guard (§3.5a), `McpRateLimiter` plus the web module's
+`McpCallQuota` (§3.5b).
+
+| | |
+|---|---|
+| Fixed | 2 (§2) |
+| Deliberately accepted — **do not "fix"** | 1 (§3.1) |
+| Shipped since the review | 4 (§3.2, §3.3, §3.4, §3.5) |
+| Still open | **one QUESTION, not a gap** |
+
+**The one open item is §3.5a's residual**, and it is a usability decision rather than a security
+one: whether `SchemaDefaults` should flip `mcpHttpToken` to `YES` for new web-created configs now
+that turning it on costs the operator nothing. It is `"NO"` today (verified in
+`web/…/config/SchemaDefaults.java`), which stays correct for a fail-closed feature — a server the
+web app runs is loopback and fronted by the proxy, so a token-off one is not reachable without an
+account either way. It matters only for a config later exported and run elsewhere.
+
+The verdict above and every section below are the review as written on 2026-08-03 and are left
+alone: they record what was found on the day, which is worth more than a document edited to
+look current. Read each §3 heading for that finding's own status — those were right all along.
 
 ---
 

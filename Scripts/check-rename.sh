@@ -196,7 +196,15 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # renamed, so this is a plain +3 with no netting to see through. Verified as the entries above say
 # to: each new file holds exactly ONE notice line, and `git diff -G'formerly Orinda Software Ltd'
 # --name-only` lists nothing at all, so no surviving file's header moved to make up the number.
-expect "copyright chain-of-title lines" 483 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-27: 483 -> 485. TWO new files, one notice each -- Scripts/loadtest/run-loadtest.sh (the
+# cold-start load-test driver) and Scripts/loadtest/DbProbe.java (its one-shot credential probe).
+# THE SECOND ONE IS WHY THIS ENTRY IS WORTH READING. The release stopped here at 484, not 485:
+# DbProbe.java had been written with NO notice at all, so the count was short by one and the
+# shortfall looked like an ordinary +1 for the shell script. A TOTAL cannot see a missing header --
+# it only sees a sum that moved -- so the delta has to be checked FILE BY FILE, which is what the
+# 2026-08-21 entry means by verifying a set difference rather than a direction. Doing that found
+# the omission; re-pinning to 484 would have locked it in and called it correct.
+expect "copyright chain-of-title lines" 485 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 

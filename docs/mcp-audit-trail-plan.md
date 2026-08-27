@@ -1,6 +1,6 @@
 # Audit trail — plan
 
-> ## STATUS: items 1–3 and encryption in transit BUILT, 2026-08-12
+> ## STATUS: items 1–3, encryption in transit (2026-08-12) and spool encryption at rest (`0a3c17f`) BUILT
 >
 > **Decided by David:** `MCP_AUDIT_LEVEL=VALUES` is the production posture — arguments and responses
 > are recorded for everything (§3.2) — and encryption in transit is an **optional switch on the web
@@ -17,11 +17,26 @@
 > inside the web app's own process and a process cannot change its own environment. Saving also
 > **reopens the sink**, because a Kafka producer reads its properties once at construction.
 >
-> **NOT built, and now load-bearing given the VALUES decision:** the write-ahead spool is still
-> unencrypted (§2.3), so argument values and response payloads sit in plaintext on the host whenever
-> the broker is unreachable. The Admin → Audit page states this rather than letting the switch imply
-> otherwise. §3.1 (one record or two) stayed as recommended — two records, correlated — and §3.3
-> (admin-action and config-change auditing) is untouched.
+> **SPOOL ENCRYPTION IS NOW BUILT — `0a3c17f`, "Encrypt the audit spool, and refuse to deliver what
+> cannot be read".** This banner said it was not for two weeks after it shipped, which is the sort of
+> line that gets quoted: it reads as a live data-protection exposure under the VALUES decision, and
+> on 2026-08-27 it was listed as outstanding work on that basis. **`SpoolCipher`** is AES-256-GCM
+> with a fresh 12-byte IV per record, keyed from **`MCP_AUDIT_SPOOL_KEY`**, wired in at
+> `SpoolingAuditSink`'s construction via `SpoolCipher.fromEnvironment()`.
+>
+> **It is OFF by default, and "off" is the honest description of an unset key — not "unavailable".**
+> Two properties are worth carrying: a named-but-unusable key **throws** rather than falling back to
+> plaintext, because an operator who asked for encryption must not silently get none; and each line
+> carries an `ENC1:` marker so a spool written before the key was set still drains rather than being
+> stranded.
+>
+> **The Admin → Audit page was wrong in the same way and mattered more** — it told operators
+> flatly that "the write-ahead spool is not encrypted", which is false where a key is set and reads
+> as "there is no option" where one is not. It now reports the deployment's actual state and names
+> the variable. Fixed 2026-08-27 in the same change as this paragraph.
+>
+> **Still genuinely untouched:** §3.3 (admin-action and config-change auditing). §3.1 (one record or
+> two) stayed as recommended — two records, correlated.
 >
 > The rest of this document is the reasoning as written before implementing.
 
