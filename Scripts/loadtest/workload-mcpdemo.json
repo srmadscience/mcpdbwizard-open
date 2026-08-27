@@ -1,0 +1,37 @@
+{
+  "//": "Workload for the mcpdemo config (hotel schema). Weights are relative, not percentages.",
+  "//why": "Every entry binds a VARYING value. A hundred thousand calls binding one literal",
+  "//why2": "measures Oracle's cursor cache, not the server -- a real, repeatable figure",
+  "//why3": "describing a workload nobody has. ${random:a-b} and ${seq} exist for that.",
+  "tools": [
+    {
+      "//": "The correctness check, not a throughput entry. Every value must differ AND the",
+      "//2": "values must span exactly as many numbers as there were calls -- which is what",
+      "//3": "proves each call reached Oracle rather than a cache, a retry or a shared result.",
+      "//4": "A throughput figure alone cannot tell a fast server from a broken one.",
+      "tool": "booking_id_seq_nextval",
+      "weight": 1,
+      "check": "unique"
+    },
+    {
+      "//": "Two parameterless SELECTs: the cheapest real round trip in this schema, so they",
+      "//2": "set the floor the heavier entries are read against.",
+      "tool": "region_list",
+      "weight": 4
+    },
+    {
+      "tool": "amenity_list",
+      "weight": 4
+    },
+    {
+      "//": "A primary-key fetch across the REAL key range of this table (1-7 today), so every",
+      "//2": "call returns a row. A range wider than the data would still be a valid load -- a",
+      "//3": "miss is a full round trip and an index probe -- but it would quietly measure the",
+      "//4": "not-found path instead of the fetch. What it must never be is the SAME key each",
+      "//5": "time: that measures Oracle cursor cache, not this server.",
+      "tool": "complaints_get_by_pk",
+      "weight": 6,
+      "args": { "complaint_id": "${random:1-7}" }
+    }
+  ]
+}

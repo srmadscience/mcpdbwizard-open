@@ -307,6 +307,40 @@ java -cp '/app/lib/*' com.mcpdbwizard.loadtest.McpLoad --url http://127.0.0.1:80
     --workload work.json --for 5m --threads 8 --rate 200 --warmup 30s --out results.json
 ```
 
+**VERIFIED END TO END AGAINST A PUBLISHED IMAGE, 2026-08-27 — it had only ever driven a stub
+before.** It shipped in 2.0.5 tested against a Jetty stub; every figure here is
+`ghcr.io/srmadscience/mcpdbwizard:2.0.6` talking to a real generated server over Oracle
+(`mcpdemo`, 25 tools). `Scripts/loadtest/run-loadtest.sh` reproduces all of it from a cold start.
+
+| | direct `:8090/mcp` | through the proxy `/mcp/mcpdemo` |
+|---|---|---|
+| throughput | **1,476/sec** | **1,069/sec** |
+| service p50 / p99 | 3.79 / 8.76 ms | 4.08 / 11.23 ms |
+
+**The proxy costs about 28% of throughput and ~0.3 ms at p50**, measured on the SAME container
+minutes apart so the comparison is not across two machines or two moods of one. That is the price
+of the only component that knows which account is calling; it is not free and it is not much.
+
+**Rate control and the two latencies are real, and this is the pair worth keeping.** `--rate 100`
+landed 2,000 calls in 20s at 100.0% of target. `--rate 1500` against a server that manages ~500
+achieved 33.2% — and reported `service p50 15.12 ms` beside `scheduled p50 5136.73 ms`. Service
+time alone says a healthy 15 ms while the server is three times oversubscribed; that 340× gap IS
+the coordinated-omission error, now demonstrated rather than argued.
+
+**`check: unique` is the only thing in a run that separates a fast server from a broken one** —
+1,971 sequence values, distinct and contiguous, prove every call reached Oracle rather than a
+cache, a retry or a shared result. No throughput figure can show that.
+
+**Throughput here is WEATHER.** The same image and workload gave 407/sec one evening and 1,476/sec
+the next morning on the same laptop. Compare runs from one sitting; never quote a number from this
+table as a capability.
+
+**Testing the PROXY needs an API token, which needs the admin password.** If that is unknown, do
+NOT reset it — clone the volume, delete `users.properties` from the copy, and start a throwaway
+container with `ADMIN_INITIAL_PASSWORD`. A fresh admin seeds, `POST /admin/users/issue-token`
+returns the token once as a flash attribute, and the real deployment is never touched. That is how
+the proxy row above was measured.
+
 `Scripts/loadtest/mcp-load.sh` is the container wrapper: it finds or starts a server, ships a
 workload file in, and reads the server's own Prometheus `/metrics` before and after — a second,
 independent count, which is worth more than either measurement alone.
