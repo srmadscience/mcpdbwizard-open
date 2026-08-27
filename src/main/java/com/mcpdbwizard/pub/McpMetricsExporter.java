@@ -21,6 +21,9 @@ import com.sun.net.httpserver.HttpServer;
  *       <td>Port to listen on. <b>Unset means no listener</b> — see below.</td></tr>
  *   <tr><td>{@code MCP_METRICS_HOST}</td>
  *       <td>Address to bind, default {@value #DEFAULT_BIND_HOST}.</td></tr>
+ *   <tr><td>{@code MCP_METRICS_HOST_MANAGED}</td>
+ *       <td>Set by a supervising runtime that chose the bind address itself, inside a private
+ *           network namespace. Suppresses the exposure warning only — see below.</td></tr>
  * </table>
  *
  * <h2>Why there is no default port</h2>
@@ -47,6 +50,21 @@ import com.sun.net.httpserver.HttpServer;
  * traffic, which is worth a line in the log and worth a network policy, but it is not the same
  * risk as an open call surface.
  *
+ * <h2>Why a container is allowed to bind every interface without being warned at</h2>
+ *
+ * <p>{@code MCP_METRICS_HOST_MANAGED} exists because the warning above is <b>advice an operator
+ * cannot act on</b> when a supervising runtime placed this server inside a private network
+ * namespace. Binding {@code 0.0.0.0} there is not an exposure: nothing outside can reach the
+ * namespace until the deployment publishes the port, and THAT is the deliberate act the warning
+ * is really about. Telling twenty child servers' logs to "restrict it at the network" when the
+ * namespace already does is how operators learn to scroll past warnings.
+ *
+ * <p>It suppresses <b>only</b> the warning, and only when the runtime supplied the address itself.
+ * An operator who sets {@code MCP_METRICS_HOST} by hand is still told, because then the choice —
+ * and the responsibility for a network policy — is genuinely theirs. Nothing here changes what is
+ * bound, and the loopback default is untouched for the ordinary case of this class running as a
+ * library in somebody's own JVM, where measuring a server must not be what puts it on a network.
+ *
  * <h2>A failure here must not take the server down</h2>
  *
  * <p>An unusable port is reported and the MCP server carries on. Metrics are an observability
@@ -61,6 +79,12 @@ public final class McpMetricsExporter implements AutoCloseable {
 
     public static final String PORT_VARIABLE = "MCP_METRICS_PORT";
     public static final String HOST_VARIABLE = "MCP_METRICS_HOST";
+
+    /**
+     * Set by a supervising runtime that chose {@link #HOST_VARIABLE} itself, inside a private
+     * network namespace. Suppresses the exposure warning; binds nothing differently.
+     */
+    public static final String HOST_MANAGED_VARIABLE = "MCP_METRICS_HOST_MANAGED";
 
     /** Loopback, so a server is not put on the network by the act of measuring it. */
     public static final String DEFAULT_BIND_HOST = "127.0.0.1";
@@ -94,9 +118,16 @@ public final class McpMetricsExporter implements AutoCloseable {
         String theHost = bindHost(System.getenv(HOST_VARIABLE));
 
         if (!McpHttpPolicy.isLoopbackBindHost(theHost)) {
-            warn(theLog, "MCP metrics are being exposed on " + theHost + ":" + thePort
-                    + " (" + HOST_VARIABLE + "). The endpoint is unauthenticated and publishes this"
-                    + " schema's object names and call volumes; restrict it at the network.");
+            if (isManagedBind(System.getenv(HOST_MANAGED_VARIABLE))) {
+                info(theLog, "MCP metrics are bound on " + theHost + ":" + thePort
+                        + " inside a private network namespace (" + HOST_MANAGED_VARIABLE + ")."
+                        + " Nothing outside reaches them until the deployment publishes the port.");
+            } else {
+                warn(theLog, "MCP metrics are being exposed on " + theHost + ":" + thePort
+                        + " (" + HOST_VARIABLE + "). The endpoint is unauthenticated and publishes"
+                        + " this schema's object names and call volumes; restrict it at the"
+                        + " network.");
+            }
         }
 
         try {
@@ -169,6 +200,23 @@ public final class McpMetricsExporter implements AutoCloseable {
         return theSetting.trim();
     }
 
+    /**
+     * Testable half of {@link #HOST_MANAGED_VARIABLE}.
+     *
+     * <p>Deliberately strict: only an explicit yes counts, so a variable left over as an empty
+     * string or set to "no" cannot quietly silence the exposure warning.
+     */
+    static boolean isManagedBind(String theSetting) {
+        if (theSetting == null) {
+            return false;
+        }
+        String theValue = theSetting.trim();
+        return "yes".equalsIgnoreCase(theValue)
+                || "true".equalsIgnoreCase(theValue)
+                || "y".equalsIgnoreCase(theValue)
+                || "1".equals(theValue);
+    }
+
     private static Executor daemonExecutor() {
         return Executors.newSingleThreadExecutor(new ThreadFactory() {
             public Thread newThread(Runnable theRunnable) {
@@ -178,6 +226,12 @@ public final class McpMetricsExporter implements AutoCloseable {
                 return theThread;
             }
         });
+    }
+
+    private static void info(LogInterface theLog, String theMessage) {
+        if (theLog != null) {
+            theLog.info(theMessage);
+        }
     }
 
     private static void warn(LogInterface theLog, String theMessage) {

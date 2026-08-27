@@ -213,7 +213,12 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # 2026-08-27 (third move today): 487 -> 488. ONE new file, one notice -- TSparseIndexBy, the live
 # harness for a SPARSE index-by OUT collection. A plain +1, expected before the gate ran and
 # verified file by file after, which is the rule the DbProbe.java entry above exists to enforce.
-expect "copyright chain-of-title lines" 488 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-27 (fourth move today): 488 -> 489. ONE new file, one notice -- the web module's
+# MetricsBindHostTest, which pins the bind address a child MCP server is given for its Prometheus
+# scrape port. A plain +1, predicted before the gate ran and then verified as a set difference:
+# `git diff -G'formerly Orinda Software Ltd' --name-only` since the last passing commit lists that
+# one file and nothing else, so no surviving header moved to make up the number.
+expect "copyright chain-of-title lines" 489 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
 expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
 

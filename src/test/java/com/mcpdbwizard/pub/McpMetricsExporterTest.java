@@ -9,6 +9,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -57,6 +58,34 @@ class McpMetricsExporterTest {
         assertEquals("127.0.0.1", McpMetricsExporter.bindHost(null));
         assertEquals("127.0.0.1", McpMetricsExporter.bindHost(""));
         assertEquals("0.0.0.0", McpMetricsExporter.bindHost(" 0.0.0.0 "));
+    }
+
+    @Test
+    void onlyAnExplicitYesSuppressesTheExposureWarning() {
+        // The flag says "a supervising runtime chose the bind address, inside a private network
+        // namespace" - so it must not be satisfiable by accident. A variable left behind as an
+        // empty string, or set to no, has to leave the warning in place: silencing it wrongly is
+        // how an operator ends up with an unauthenticated endpoint on a real network and no line
+        // in any log saying so.
+        assertTrue(McpMetricsExporter.isManagedBind("YES"));
+        assertTrue(McpMetricsExporter.isManagedBind(" yes "));
+        assertTrue(McpMetricsExporter.isManagedBind("true"));
+        assertTrue(McpMetricsExporter.isManagedBind("1"));
+
+        assertFalse(McpMetricsExporter.isManagedBind(null));
+        assertFalse(McpMetricsExporter.isManagedBind(""));
+        assertFalse(McpMetricsExporter.isManagedBind("   "));
+        assertFalse(McpMetricsExporter.isManagedBind("no"));
+        assertFalse(McpMetricsExporter.isManagedBind("0"));
+        assertFalse(McpMetricsExporter.isManagedBind("maybe"));
+    }
+
+    @Test
+    void theManagedFlagChangesNothingAboutWhatIsBound() {
+        // It is a logging decision and only a logging decision. If it ever starts influencing the
+        // address, the loopback default has stopped meaning what the class comment says it means.
+        assertEquals("127.0.0.1", McpMetricsExporter.bindHost(null));
+        assertEquals("0.0.0.0", McpMetricsExporter.bindHost("0.0.0.0"));
     }
 
     // ---- serving --------------------------------------------------------
