@@ -31,8 +31,18 @@
 > Two tests pinned the OLD schema wording and were updated: they encoded the defect the report
 > found. Db-free suites green — app 845/0/0, web 398/0/0.
 >
-> **Phase 6 outstanding:** this changes emitted output for every `MCP_SERVER=YES` config, so the
-> six-box estate is the gate before it goes anywhere.
+> **Phase 6 CLOSED 2026-08-28.** The six-box estate ran green on `2.0.12`, which is the gate this
+> asked for: ORCL12 961, XE18/ORCL19/ORCL21 955, FREE23/FREE26 968, and web 482 on every box, all
+> app failures zero.
+>
+> **It had said "outstanding" for eight days and five releases, and that is the part worth keeping.**
+> The work shipped in 2.0.6; the banner did not move with it, so anyone reading this doc was told
+> finished work was pending — and on 2026-08-27 that cost a recommendation to redo it. The estate
+> genuinely had not run since 2.0.9, so the claim was half true, which is the hardest kind of stale
+> to catch: the gate really was open, just not for the reason written here.
+>
+> Check a status line against the code and the estate logs, not against the sentence. See
+> [[stale-plan-doc-statuses]].
 
 ## The defect
 

@@ -32,8 +32,55 @@
 #
 set -u
 
-REPO=$(cd "$(dirname "$0")/../.." && pwd)
+# THE REPOSITORY ROOT, WHICHEVER TREE THIS IS. Asking git is not fussiness: this script SHIPS,
+# and the exported tree has a different shape. Here it sits at app/Scripts/check-rename.sh, so
+# "$(dirname $0)/../.." was the root; the exporter flattens app/ to the top, so there it sits at
+# Scripts/check-rename.sh and that same expression lands ONE LEVEL ABOVE the repository -- in
+# whatever directory happens to contain the checkout. Every count then ran somewhere else and
+# came back 0 or empty, and SEVEN assertions failed on a clean public checkout: the one script
+# that looks like "prove this tree is consistent" told a contributor it was not.
+#
+# The fallback keeps it working outside a git checkout (an unpacked tarball), where the old
+# expression is still the best guess available.
+REPO=$(git -C "$(dirname "$0")" rev-parse --show-toplevel 2>/dev/null)     || REPO=""
+[ -n "$REPO" ] || REPO=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$REPO" || exit 2
+
+# Where this script lives RELATIVE TO THAT ROOT, for the self-exclusions below. It quotes the old
+# package name and the copyright lines verbatim while explaining them, so counting it measures this
+# script's own prose rather than the repository -- and an exclusion anchored on the development
+# tree's path silently stops excluding anything in the exported one, which inflates every count by
+# however many times this file says the thing it is counting.
+SELF=${0#"$REPO"/}
+case "$SELF" in
+    /*|"$0") SELF=$(cd "$(dirname "$0")" && pwd)/$(basename "$0"); SELF=${SELF#"$REPO"/} ;;
+esac
+
+# WHICH TREE THIS IS, and the two things that follow from it.
+#
+# APP is the prefix the app module's sources sit behind: "app/" here, nothing in the exported
+# tree, which the exporter flattens to the top. Without it every app/... path below simply does
+# not exist there, grep says so on stderr, and the assertion reports an EMPTY count -- which reads
+# as "0 of something" rather than as "this did not run".
+#
+# PARTIAL says the web module is absent, which is the whole difference between this repository and
+# the published one. It decides whether a TOTAL can be asserted at all: see skip_on_partial.
+if [ -d app/src/main/java ]; then APP=app/; else APP=""; fi
+if [ -d web/src/main/java ]; then PARTIAL=no; else PARTIAL=yes; fi
+
+# A COUNT OF THE WHOLE REPOSITORY CANNOT BE ASSERTED AGAINST A SUBSET OF IT, and pretending
+# otherwise is worse than not checking. The published tree carries the app module and neither web/
+# nor the private directories, so every total below -- 493 copyright lines, 6 portions notices, 8
+# history notes -- is arithmetic about a tree the reader does not have. Reported as skipped, with
+# the reason, rather than failed: a contributor running this on a clean checkout should not be told
+# their tree is broken by a number that was never about it.
+#
+# ZERO assertions are NOT skipped, and the distinction is the point. "This string appears nowhere"
+# stays true and stays meaningful on any subset -- so everything that must be absent is still
+# checked in the published tree, which is where absence actually matters.
+skip_on_partial() {
+    printf '  skipped %-46s %s\n' "$1" "$2"
+}
 
 FAILED=0
 
@@ -51,7 +98,7 @@ FAILED=0
 # next commit will contain.
 count() {
     git ls-files --cached --others --exclude-standard \
-        | grep -v -e '^app/Scripts/check-rename\.sh$' -e '^docs/rename-plan\.md$' \
+        | grep -v -e "^$SELF$" -e '^docs/rename-plan\.md$' \
         | tr '\n' '\0' \
         | xargs -0 grep -cF "$1" 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}'
@@ -89,7 +136,8 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 #
 # Baseline 346 at 231d11f; 348 after phase 1, which added the line to package.html (whose
 # proprietary notice was replaced) and to Namer's param_vendor_name javadoc; 350 after
-# phase 5 added LegacyConfigKeys and its test, each carrying the standard header. Phases 2,
+# phase 5 added the web module's legacy-key mapper and its test, each carrying the standard
+# header. Phases 2,
 # 3, 4 and 6 left it untouched, which is what they should do -- moving a package, renaming
 # an artifact or regenerating a demo tree must not so much as brush a copyright header.
 #
@@ -104,8 +152,8 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # MetricsPortKeyTest, one header line each.
 #
 # 352 -> 360 on 2026-08-10: EIGHT new files, one header line each -- the MCP tool description arc
-# (McpDescriptionKeysTest, WorkingConfigDescriptionsTest, DescriptionController,
-# DescriptionControllerTest, DescriptionPageRenderTest, McpParamTypeLabelTest) and the load harness
+# (McpDescriptionKeysTest, McpParamTypeLabelTest, plus four in the WEB module: a controller, its
+# test, a page-render test and a working-config test) and the load harness
 # (Scripts/loadtest/McpLoad.java, Scripts/loadtest/mcp-load.sh). Verified two ways before moving the
 # number: every one is a NEW file, and the three files that a -G diff also flagged
 # (Function/Sequence/TableTableDataModel) were confirmed to hold exactly 1 line before and after --
@@ -116,8 +164,8 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # another party's API would misstate authorship. Do not "tidy" the two into agreement.
 #
 # 360 -> 364 on 2026-08-11: FOUR new files, one header line each, and the reconciliation matters
-# more than the number. THREE are the "description will never be used" work (McpUnexposedReport,
-# McpUnexposedReportTest, UnexposedKeyMatchesEditorKeyTest). The FOURTH is
+# more than the number. THREE are the "description will never be used" work, all in the WEB module
+# (a report class, its test, and a key-agreement test). The FOURTH is
 # QuoteQualifiedNameTest, added back in c251d66 -- so this assertion had ALREADY been failing for
 # two commits before anyone ran it, both of them pushed. That is the lesson worth keeping: the
 # check is not part of `mvn test` and a green six-box estate says nothing about it, so it has to be
@@ -135,19 +183,16 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # before/after count: 42 files flagged, 39 notice lines GAINED, 0 lost, and 0 existing file
 # whose header count moved -- so every one is a new file, which is the only shape of change
 # this assertion should ever accept without a closer look. By arc:
-#   audit + spool (10)  SpoolCipher(+Test), AuditSettings(+Test), AuditStats(+Test),
-#                       AuditPageRendersTest, McpAccessAuditorFailureTest,
-#                       AuthenticationAuditListener(+Test)
+#   audit + spool (10)  SpoolCipher(+Test); in the WEB module, two settings/stats pairs, two
+#                       page and failure tests, and an authentication listener(+Test)
 #   inline SQL (6)      SqlInliner(+Test), InlineSqlWriteTest, InlineSqlTextTest,
-#                       InlineSqlLibraryTest, SqlStatementKeysTest
+#                       SqlStatementKeysTest, and one library test in the WEB module
 #   container metrics (3), extra-TYPE check (3), run-on-start (2), protocol log (2)
-#   2026-08-17 GUI/release work (7)  OracleRequiredInterceptor,
-#                       DesignUnavailableController, NewTableIsReadOnlyByDefaultTest,
-#                       PoolingDefaultsTest, OracleUnavailableScreenTest,
-#                       check-links.mjs, release.sh
+#   2026-08-17 GUI/release work (7)  check-links.mjs, release.sh, and five in the WEB module:
+#                       an interceptor, an unavailable-screen controller and three tests
 #   remaining (6)       TRecordFieldCensus, AspDatatypeHintTest, RetiredWsRecordTypeTest,
-#                       ConfigStoreWriteFailureTest, McpProxyEndToEndTest,
-#                       tz-collection-binding-plan.md
+#                       tz-collection-binding-plan.md, and two WEB module tests (a config-store
+#                       write failure and the proxy end-to-end)
 #
 # THIS SAT FAILING FOR SIX DAYS AND ~39 FILES, which is worse than the two-commit lapse noted
 # above and makes the same point louder: the number is only as good as the habit of running the
@@ -158,17 +203,17 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # because it is ours. A RISE is the benign direction here and is ordinary maintenance; a FALL
 # would mean a file lost its notice, which is the thing this number exists to catch.
 # 2026-08-21 (later the same day): 448 -> 451. Three files, one notice each -- the FK child-lookup
-# description work: McpLookupDescriptionTest, DescriptionBadgeTest, and its plan document. Checked
+# description work: McpLookupDescriptionTest, a badge test in the WEB module, and its plan
+# document. Checked
 # to be purely ADDITIVE rather than trusting the direction: the set of files carrying the notice
 # before and after differs by exactly those three, with none dropping out. That is the check worth
 # doing, because four gained and one lost also reads as +3 and is the failure this number exists
 # to catch.
 # 2026-08-25: 451 -> 463. TWELVE new files, one notice each, from the 2.0.3 arcs -- the
-# Runtime tool-listing work (McpToolListing(+Test), ToolListingStub,
-# RuntimeToolListingRenderTest, ServiceOptionsToolListingRenderTest,
-# GeneratedMcpToolListingShapeTest), Prometheus service discovery
-# (ServiceDiscoveryController(+Test), McpMetricsTargets, ScrapeAuthenticationEntryPoint,
-# ServiceDiscoveryEndpointSecurityTest), and OracleSettingsStartupReportTest.
+# Runtime tool-listing work (GeneratedMcpToolListingShapeTest here, plus a listing class(+Test),
+# a stub and two render tests in the WEB module), Prometheus service discovery (four more WEB
+# files: a controller(+Test), a targets class, a scrape entry point and a security test), and one
+# WEB start-up report test.
 # Checked the way the 2026-08-21 entry says to, not by the direction: a per-file count at
 # 33f460f and at HEAD gives 12 files GAINED, 0 LOST, and 0 file present in both whose count
 # moved. A set difference of exactly the new files is the only shape that means "additive";
@@ -204,29 +249,74 @@ echo "1. Chain of title -- MUST NOT CHANGE (see the header above)"
 # it only sees a sum that moved -- so the delta has to be checked FILE BY FILE, which is what the
 # 2026-08-21 entry means by verifying a set difference rather than a direction. Doing that found
 # the omission; re-pinning to 484 would have locked it in and called it correct.
-# 2026-08-27 (later): 485 -> 487. TWO new files, one notice each -- the web module's
-# VersionControllerAdvice and its VersionOnEveryPageTest, for the version shown on the login screen
-# and in the banner. A plain +2 with nothing netting out, and unlike the entry above the arithmetic
-# was worked out BEFORE the gate ran and matched what it reported. That is the check: predicting the
-# number and then verifying it file by file are different acts, and only the second one catches a
-# file that arrived with no notice at all.
+# 2026-08-27 (later): 485 -> 487. TWO new files in the WEB module, one notice each -- a controller
+# advice and its test, for the version shown on the login screen and in the banner. A plain +2 with
+# nothing netting out, and unlike the entry above the arithmetic was worked out BEFORE the gate ran
+# and matched what it reported. That is the check: predicting the number and then verifying it file
+# by file are different acts, and only the second one catches a file that arrived with no notice at
+# all.
 # 2026-08-27 (third move today): 487 -> 488. ONE new file, one notice -- TSparseIndexBy, the live
 # harness for a SPARSE index-by OUT collection. A plain +1, expected before the gate ran and
 # verified file by file after, which is the rule the DbProbe.java entry above exists to enforce.
-# 2026-08-27 (fourth move today): 488 -> 489. ONE new file, one notice -- the web module's
-# MetricsBindHostTest, which pins the bind address a child MCP server is given for its Prometheus
-# scrape port. A plain +1, predicted before the gate ran and then verified as a set difference:
+# 2026-08-27 (fourth move today): 488 -> 489. ONE new file in the WEB module, one notice -- a test
+# pinning the bind address a child MCP server is given for its Prometheus scrape port. A plain +1,
+# predicted before the gate ran and then verified as a set difference:
 # `git diff -G'formerly Orinda Software Ltd' --name-only` since the last passing commit lists that
 # one file and nothing else, so no surviving header moved to make up the number.
-# 2026-08-27 (fifth move today): 489 -> 493. FOUR new files, one notice each -- RunThisFileLauncher
-# (adopt and run a config named by MCPDBWIZARD_RUN_THIS_FILE) with RunThisFileAdoptionTest,
-# UploadSavesTheConfigTest, and WellKnownIsUnauthenticatedTest. A plain +4, predicted before the
-# gate ran and verified as a set difference after: `git diff -G'formerly Orinda Software Ltd'
-# --name-only` since the last passing commit lists those four and nothing else, so no surviving
-# header moved to make up the number.
+# 2026-08-27 (fifth move today): 489 -> 493. FOUR new files in the WEB module, one notice each --
+# one start-up component and three tests, across config upload, boot-time config adoption and the
+# security chain. A plain +4, predicted before the gate ran and verified as a set difference after:
+# `git diff -G'formerly Orinda Software Ltd' --name-only` since the last passing commit lists those
+# four and nothing else, so no surviving header moved to make up the number.
+# 2026-08-28: 493 -> 491. TWO of those four DELETED -- the boot-time config adoption arc was
+# withdrawn. A FALL is normally the direction this number exists to catch, so it is worth saying
+# why this one is not: the notice lines went with whole files, not out of surviving ones. Verified
+# that way rather than by the arithmetic -- `git diff -G'formerly Orinda Software Ltd' --name-only`
+# lists exactly the two deletions and nothing else, so no file that remains lost its header.
+#
+# ---------------------------------------------------------------------------------------
+# WHEN YOU ADD AN ENTRY: NAME APP-MODULE FILES, NEVER WEB-MODULE ONES.
+#
+# This script SHIPS -- app/Scripts/ is the public half, and every line above is readable in
+# mcpdbwizard-open. app/ is Apache-2.0 and its filenames are already published, so naming
+# them costs nothing and makes an entry checkable. web/ is proprietary and does not export,
+# so a class named here is the only place its name appears publicly: the running record of
+# a closed module's internals, published by the one file whose job is bookkeeping.
+#
+# Say "N new files in the WEB module" and what kind they are -- a component, a test, which
+# area. That is enough to verify the arithmetic later, which is all these entries are for.
+# Same reasoning as Scripts/export/exclude.txt deliberately not enumerating what it drops:
+# an inventory of what you are withholding publishes the index you meant to withhold.
+#
+# Three entries above were rewritten on David's instruction (2026-08-27) after the first two
+# had already been pushed public. The names are innocuous, which is exactly why this needed
+# a rule rather than a judgement call each time -- nobody stops for an innocuous one.
+# ---------------------------------------------------------------------------------------
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "copyright chain-of-title lines" "a whole-repository total; this tree is the published subset"
+else
+    # 2026-08-28 (later): 491 -> 493. TWO new files, one notice each -- a database-free test for the
+# record-field crossing notes in the app module, and the WEB module's per-run config-directory
+# helper. A plain +2, verified as a set difference after the gate reported it.
+#
+# WORTH READING FOR THE MISS RATHER THAN THE NUMBER. The web file arrived one commit earlier and
+# the count was NOT moved with it, so this assertion had already been failing for a commit before
+# anything ran it -- the same lapse the 2026-08-11 entry records, for the same reason: a full suite
+# was run and this was not. It is not part of `mvn test`, and a green estate says nothing about it.
+# The release caught it in its BUILD phase, which is exactly why that phase exists, but the cost
+# was a stopped release rather than a one-line edit at the time.
 expect "copyright chain-of-title lines" 493 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
-expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
-expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
+fi
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
+else
+    expect "Portions Copyright (c) 1999 lines" 6 "$(count 'Portions Copyright (c) 1999')"
+fi
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "SpookyAction.com attributions" "a whole-repository total; this tree is the published subset"
+else
+    expect "SpookyAction.com attributions" 2 "$(count 'SpookyAction')"
+fi
 
 echo
 echo "2. Branding placeholders -- phase 1"
@@ -236,7 +326,7 @@ echo "2. Branding placeholders -- phase 1"
 # that no constant still HOLDS one -- and the stronger check, that none reaches generated
 # output, belongs to the regeneration diff rather than to grep.
 expect "Namer constants still holding a placeholder" 0 \
-    "$(grep -cE '= *"SUBST_' app/src/main/java/com/mcpdbwizard/pub/Namer.java)"
+    "$(grep -cE '= *"SUBST_' "${APP}src/main/java/com/mcpdbwizard/pub/Namer.java")"
 
 # PARAM_ tokens are NOT all defects. A token the generator writes into a CUSTOMER's file
 # must stay a token (PARAM_AUTHOR, PARAM_TARGET_PARAM_*, PARAM_JDBCJAR, ...); one merely
@@ -245,8 +335,8 @@ expect "Namer constants still holding a placeholder" 0 \
 # purpose, which is the documentation of this very distinction.
 expect "branding PARAM_ tokens left in our own sources" 0 \
     "$(git grep -cE '\bPARAM_(PROD_NAME|PRODUCT_NAME|PRODUCT_NAME_LONG|PRODUCT_VERSION|VERSION|PRODUCT_WWW|PRODUCT_URL|SOFTCO|SW_CO_NAME|COPYRIGHT|COPYRIGHT_NOTICE|COPYRIGHT_NOTICE_LONG|STATSINTERFACE_URL|LOGINTERFACE_URL|RORSET_URL|ORACLERESOURCEUSER_URL|LIMIT_URL)\b' \
-        -- 'app/src/main/java/com/mcpdbwizard/pub' 'app/src/main/java/com/mcpdbwizard/app' \
-           ':!app/src/main/java/com/mcpdbwizard/pub/Namer.java' 2>/dev/null \
+        -- "${APP}src/main/java/com/mcpdbwizard/pub" "${APP}src/main/java/com/mcpdbwizard/app" \
+           ":!${APP}src/main/java/com/mcpdbwizard/pub/Namer.java" 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}')"
 
 # No longer needs the com/mcpdbwizard/prod exclusion this assertion used to carry: that
@@ -254,7 +344,7 @@ expect "branding PARAM_ tokens left in our own sources" 0 \
 # nothing in the repository could regenerate it and rewriting it by hand would have shown
 # output no version of the generator ever emitted.
 expect "orindasoft.com in main sources" 0 \
-    "$(git grep -cF 'orindasoft.com' -- 'app/src/main/java' 'web/src/main/java' \
+    "$(git grep -cF 'orindasoft.com' -- "${APP}src/main/java" 'web/src/main/java' \
         2>/dev/null | awk -F: '{s+=$NF} END {print s+0}')"
 
 echo
@@ -285,7 +375,7 @@ echo "3. Package and product names"
 # anything. It sat FAILING at 6 for six days because these two were never reconciled.
 expect "com.orindasoft / com-orindasoft references" 0 \
     "$(git grep -c -e 'com\.orindasoft' -e 'com/orindasoft' -- . \
-        ':!app/Scripts/check-rename.sh' ':!docs/rename-plan.md' \
+        ":!$SELF" ':!docs/rename-plan.md' \
         ':!web/src/test/java/com/mcpdbwizard/web/runtime/RunOnStartTest.java' \
         ':!web/src/main/java/com/mcpdbwizard/web/runtime/RuntimeManager.java' 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}')"
@@ -294,7 +384,7 @@ expect "com.orindasoft / com-orindasoft references" 0 \
 # checked-in 2003-2007 generator output and docs prose. Those are phases 6 and 7.
 expect "Orinda* class identifiers" 0 \
     "$(git grep -cE 'Orinda(BuildEvent|Connector|TestModule|TestAction)|JdbcWizardWebApplication' \
-        -- . ':!docs/rename-plan.md' ':!app/Scripts/check-rename.sh' 2>/dev/null \
+        -- . ':!docs/rename-plan.md' ":!$SELF" 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}')"
 # Four DELIBERATE historical statements survive, and they should. Each says what the
 # product used to be called, in a place where that is the point:
@@ -320,7 +410,11 @@ expect "Orinda* class identifiers" 0 \
 # permits -- the FAQ's three are the same sentence in a different page. Verified by listing the
 # carrying files before and after rather than by the total: the set differs by that one file
 # only, and none of the other four moved.
-expect "deliberate OrindaBuild history notes" 8 "$(count 'OrindaBuild')"
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "deliberate OrindaBuild history notes" "a whole-repository total; this tree is the published subset"
+else
+    expect "deliberate OrindaBuild history notes" 8 "$(count 'OrindaBuild')"
+fi
 
 # Phase 3: artifact and jar names. NOT the same as the property keys (jdbcwizard.*,
 # JDBCWIZARD_*, mcpdbwizard_mcp_*), which are phase 5 and keep a compatibility alias --
@@ -332,7 +426,7 @@ expect "deliberate OrindaBuild history notes" 8 "$(count 'OrindaBuild')"
 # the checkout DIRECTORY, still jdbcwizard-app, which a comment there explains.
 expect "stale jdbcwizard-* artifact names" 0 \
     "$(git grep -cE 'jdbcwizard-(app|web|parent|open)' -- . \
-        ':!docs/rename-plan.md' ':!app/Scripts/check-rename.sh' \
+        ':!docs/rename-plan.md' ":!$SELF" \
         ':!docker-compose.yml' ':!DEPLOYMENT.md' 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}')"
 expect "Maven artifactIds renamed" 0 "$(count '<artifactId>jdbcwizard-')"
@@ -341,19 +435,27 @@ expect "Maven artifactIds renamed" 0 "$(count '<artifactId>jdbcwizard-')"
 # spelling would never reach zero and would say nothing. What is asserted instead is that
 # nothing still READS the old name as its primary: application.properties defines only
 # mcpdbwizard.* keys, and no @Value resolves a jdbcwizard.* one.
-expect "primary property keys renamed" 0 \
-    "$(grep -cE '^jdbcwizard\.' web/src/main/resources/application.properties \
-        web/src/main/resources/application-docker.properties 2>/dev/null \
-        | awk -F: '{s+=$NF} END {print s+0}')"
-expect "@Value sites reading a legacy key" 0 \
-    "$(git grep -cE '\$\{jdbcwizard\.' -- 'web/src/main/java' 2>/dev/null \
-        | awk -F: '{s+=$NF} END {print s+0}')"
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "primary property keys renamed" "its subject is the web module, which does not ship"
+else
+    expect "primary property keys renamed" 0 \
+        "$(grep -cE '^jdbcwizard\.' web/src/main/resources/application.properties \
+            web/src/main/resources/application-docker.properties 2>/dev/null \
+            | awk -F: '{s+=$NF} END {print s+0}')"
+fi
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "@Value sites reading a legacy key" "its subject is the web module, which does not ship"
+else
+    expect "@Value sites reading a legacy key" 0 \
+        "$(git grep -cE '\$\{jdbcwizard\.' -- 'web/src/main/java' 2>/dev/null \
+            | awk -F: '{s+=$NF} END {print s+0}')"
+fi
 
 # Metrics were a CLEAN break -- no alias, so no code may still emit the old series name.
 # Scoped to SOURCE, not docs: DEPLOYMENT.md's upgrade section has to name the old series
 # to tell an operator which dashboards to edit, and that mention is the fix, not the bug.
 expect "legacy jdbcwizard_ metric names in source" 0 \
-    "$(git grep -c 'jdbcwizard_' -- 'app/src' 'web/src' 'app/Propfiles' 2>/dev/null \
+    "$(git grep -c 'jdbcwizard_' -- "${APP}src" 'web/src' "${APP}Propfiles" 2>/dev/null \
         | awk -F: '{s+=$NF} END {print s+0}')"
 
 # The alias must stay REACHABLE: these are the fallbacks, and deleting one silently
@@ -364,16 +466,24 @@ expect "legacy jdbcwizard_ metric names in source" 0 \
 # new name to point an operator at -- the generator's access-code argument was removed, so the
 # setting does not exist under either spelling. This number goes DOWN only when a setting is
 # deleted outright; a rename keeps its entry.
-expect "legacy property fallbacks still wired" 14 \
-    "$(grep -c 'RENAMED.put(' web/src/main/java/com/mcpdbwizard/web/config/LegacyConfigKeys.java)"
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "legacy property fallbacks still wired" "its subject is the web module, which does not ship"
+else
+    expect "legacy property fallbacks still wired" 14 \
+        "$(grep -c 'RENAMED.put(' web/src/main/java/com/mcpdbwizard/web/config/LegacyConfigKeys.java)"
+fi
 
 # POSITIVE assertion, and the important one in this phase. RuntimeManager locates the
 # generator by JAR FILENAME PREFIX, twice. Rename the artifact without these and the
 # build stays green while the web Runtime page dies on ClassNotFoundException for
 # ProcBuilder -- the exact defect d80ad20 was written to fix. No compiler sees it.
-expect "RuntimeManager jar-prefix matches" 2 \
-    "$(grep -c 'startsWith("mcpdbwizard-app")' \
-        web/src/main/java/com/mcpdbwizard/web/runtime/RuntimeManager.java)"
+if [ "$PARTIAL" = yes ]; then
+    skip_on_partial "RuntimeManager jar-prefix matches" "its subject is the web module, which does not ship"
+else
+    expect "RuntimeManager jar-prefix matches" 2 \
+        "$(grep -c 'startsWith("mcpdbwizard-app")' \
+            web/src/main/java/com/mcpdbwizard/web/runtime/RuntimeManager.java)"
+fi
 
 echo
 echo "4. Casing discipline (see docs/rename-plan.md 3.2)"

@@ -6406,8 +6406,13 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("          public void optionalProperty(tools.jackson.databind.BeanProperty theProperty) { note(theProperty); }");
         theJavaCode.print("          private void note(tools.jackson.databind.BeanProperty theProperty)");
         theJavaCode.print("            {");
-        theJavaCode.print("            String theJsonType = recordFieldJsonType(theProperty.getType().getRawClass());");
-        theJavaCode.print("            if (theJsonType != null) { theProperties.put(theProperty.getName(), schemaMap(\"type\", theJsonType)); }");
+        theJavaCode.print("            Class<?> theFieldType = theProperty.getType().getRawClass();");
+        theJavaCode.print("            String theJsonType = recordFieldJsonType(theFieldType);");
+        theJavaCode.print("            if (theJsonType == null) { return; }");
+        theJavaCode.print("            String theNote = recordFieldCrossingNote(theFieldType);");
+        theJavaCode.print("            theProperties.put(theProperty.getName(), theNote == null");
+        theJavaCode.print("                ? schemaMap(\"type\", theJsonType)");
+        theJavaCode.print("                : schemaMap(\"type\", theJsonType, \"description\", theNote));");
         theJavaCode.print("            }");
         theJavaCode.print("          };");
         theJavaCode.print("        }");
@@ -6437,6 +6442,25 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("if (Number.class.isAssignableFrom(theType) || theType.isPrimitive()) { return \"number\"; }");
         theJavaCode.print("if (java.util.Date.class.isAssignableFrom(theType)) { return \"string\"; }");
         theJavaCode.print("if (theType == byte[].class) { return \"string\"; }");
+        theJavaCode.print("return null;");
+        theJavaCode.print("}");
+        theJavaCode.unIndent();
+
+        theJavaCode.print("");
+        if (comments) {
+            theJavaCode.print("// How a record FIELD crosses JSON, or null when the JSON type says it all. Both of these");
+            theJavaCode.print("// used to be published as a bare {\"type\":\"string\"} -- true, and useless: it does not say");
+            theJavaCode.print("// send base64, and it does not say the T is required. A caller could only find out by");
+            theJavaCode.print("// being rejected. A SCALAR parameter of either type has always said so, in its description,");
+            theJavaCode.print("// so this is the same contract reaching one level further in rather than a new one.");
+        }
+        theJavaCode.print("private static String recordFieldCrossingNote(Class<?> theType)");
+        theJavaCode.indent();
+        theJavaCode.print("{");
+        theJavaCode.print("if (java.util.Date.class.isAssignableFrom(theType)) { return \""
+                + javaStringLiteral(recordFieldCrossingNote(RECORD_FIELD_DATE)) + "\"; }");
+        theJavaCode.print("if (theType == byte[].class) { return \""
+                + javaStringLiteral(recordFieldCrossingNote(RECORD_FIELD_RAW)) + "\"; }");
         theJavaCode.print("return null;");
         theJavaCode.print("}");
         theJavaCode.unIndent();
@@ -7271,6 +7295,43 @@ public class SAAdminWrangler extends SADbWrangler {
      * @param theJavaType          the wrapper's Java type, used only to derive the crossing note
      * @return e.g. {@code "RAW, base64"}, {@code "DATE, ISO-8601 string"}, {@code "NUMBER"}
      */
+    /** The two record-field kinds that cross as something other than what "string" suggests. */
+    static final String RECORD_FIELD_DATE = "date";
+    static final String RECORD_FIELD_RAW = "raw";
+
+    /**
+     * How a record FIELD of this kind crosses JSON, for its schema {@code description}.
+     *
+     * <p>A field used to be published as a bare <code>{"type":"string"}</code> — true, and useless.
+     * It does not say "send base64", and it does not say the {@code T} is required, so the only way
+     * to learn either was to be rejected. A SCALAR parameter of the same Oracle type has always said
+     * so, via {@link #mcpParamTypeLabel}, which is why this is the existing contract reaching one
+     * level further in rather than a new one.
+     *
+     * <p><b>A static rather than a string typed into the emitter</b>, for the same reason
+     * {@code mcpParamTypeLabel} is one: the emitted method dispatches on {@code Class} at run time
+     * and cannot be called from a database-free test, so the emitter interpolates THESE values and
+     * the test asserts them. One source of truth, checkable without an Oracle instance.
+     *
+     * <p>The date pattern comes from {@link com.mcpdbwizard.pub.McpDates#ISO_PATTERN} rather than
+     * being retyped, so the sentence cannot drift from the format {@code RECORD_MAPPER} is pinned
+     * to. That drift is exactly what makes a description worse than none: it would be believed.
+     *
+     * @param theKind {@link #RECORD_FIELD_DATE} or {@link #RECORD_FIELD_RAW}
+     * @return the description, or null for a kind that needs no note
+     */
+    static String recordFieldCrossingNote(String theKind) {
+        if (RECORD_FIELD_DATE.equals(theKind)) {
+            return "ISO-8601 date-time, pattern " + com.mcpdbwizard.pub.McpDates.ISO_PATTERN
+                    + " -- the T form is REQUIRED inside a record, unlike a scalar date parameter,"
+                    + " which also accepts a bare 1980-01-01";
+        }
+        if (RECORD_FIELD_RAW.equals(theKind)) {
+            return "base64, NOT hex, e.g. 3q2+7w== for the four bytes DE AD BE EF";
+        }
+        return null;
+    }
+
     static String mcpParamTypeLabel(String theRawOracleTypeName, String theJavaType) {
         String theOracle = (theRawOracleTypeName == null || theRawOracleTypeName.trim().isEmpty())
                 ? null : theRawOracleTypeName.trim();
