@@ -5586,7 +5586,26 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("  McpServer.sync(theProvider)");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
-        theJavaCode.print("      .capabilities(ServerCapabilities.builder().tools(true).logging().build())");
+        // tools(false) IS listChanged=false -- the boolean is the notification flag, not a switch
+        // for the tools capability itself (McpSchema.ServerCapabilities.ToolCapabilities is a record
+        // whose single component is listChanged()). It read tools(true) until 2026-08-28, so every
+        // generated server answered initialize with "tools":{"listChanged":true} and then never sent
+        // notifications/tools/list_changed -- there is nowhere it could: theTools below is a fixed
+        // Arrays.asList built once here, and nothing calls the SDK's add/remove tool methods.
+        //
+        // A client that believes listChanged has no reason to poll tools/list again, because it
+        // expects to be told. Ours would never tell it.
+        //
+        // NOT the same case as .logging(), immediately after, which is advertised because the SDK
+        // adds it unconditionally and the honest response was to implement it (see
+        // docs/mcp-protocol-logging-plan.md). This flag is ours to set, so the honest response is
+        // simply to set it correctly.
+        //
+        // And false is the TRUE answer, not a retreat: curation happens at generation time -- an
+        // unexposed operation has no tool-spec method emitted at all -- so a server's tool set is
+        // fixed for the life of the process by design. Changing it means regenerating and
+        // restarting, which is a new process the client re-initializes against.
+        theJavaCode.print("      .capabilities(ServerCapabilities.builder().tools(false).logging().build())");
         theJavaCode.print("      .tools(theTools).build();");
         if (mcpHttpsFlag) {
             if (comments) {
@@ -5753,7 +5772,8 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("  McpServer.sync(new StdioServerTransportProvider(theMapper))");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
-        theJavaCode.print("      .capabilities(ServerCapabilities.builder().tools(true).logging().build())");
+        // listChanged=false, for the reasons set out at the HTTP transport's capabilities call above.
+        theJavaCode.print("      .capabilities(ServerCapabilities.builder().tools(false).logging().build())");
         theJavaCode.print("      .tools(theTools).build();");
         if (comments) {
             theJavaCode.print("  // The stdio reader threads keep the server alive");

@@ -37,7 +37,8 @@ DAO factory logs through (`DAO_LOG_TYPE`, `MCPDBWIZARD_LOG_BACKEND`). This one i
 ## 1. The finding that forces the question
 
 `app/CLAUDE.md` records that our generated server builds
-`capabilities(ServerCapabilities.builder().tools(true).build())` and yet answers `initialize` with
+`capabilities(ServerCapabilities.builder().tools(true).build())` — the `tools(true)` half was itself
+corrected on 2026-08-28, see §4 — and yet answers `initialize` with
 `"capabilities":{"logging":{},"tools":{"listChanged":true}}`, and that **whether the SDK permits
 suppressing it was unresolved**. It is now resolved:
 
@@ -186,6 +187,20 @@ trusting them** — this file's numbers have drifted before.
    **both** emission sites (`:5212` stdio, `:5379` http). This changes no wire behaviour — the SDK
    was adding it anyway — but it stops the generated source from *claiming* something different from
    what it serves, which is what made this hard to find.
+
+   > **SUPERSEDED 2026-08-28 in its `tools` argument only** — the `.logging()` half stands. That
+   > `tools(true)` is `listChanged=true`, and it was the same defect this document was written
+   > about, sitting in the same call: a capability advertised and never implemented. The tool list
+   > is a fixed `Arrays.asList` built once at construction, so no `notifications/tools/list_changed`
+   > can ever be sent. Both sites now read `tools(false)`.
+   >
+   > **The two are NOT the same case and the difference is the whole lesson.** `logging` could not
+   > be withdrawn — the SDK adds it unconditionally — so the only honest move was to implement it.
+   > `tools` is our own argument, so the honest move is to set it correctly. Reaching for
+   > "implement it" here would have been pattern-matching on the neighbouring fix and building a
+   > notification path the architecture does not want: curation happens at generation time, and an
+   > unexposed operation has no code emitted at all, which is what makes the config file the
+   > authorization boundary.
 
 **Emitted-output impact:** changes every `MCP_SERVER=YES` tree, so byte-identity with earlier trees
 is intentionally broken. **File counts do not move** — no new file is emitted. That arithmetic is
