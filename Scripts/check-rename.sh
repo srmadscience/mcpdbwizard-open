@@ -305,7 +305,23 @@ else
 # was run and this was not. It is not part of `mvn test`, and a green estate says nothing about it.
 # The release caught it in its BUILD phase, which is exactly why that phase exists, but the cost
 # was a stopped release rather than a one-line edit at the time.
-expect "copyright chain-of-title lines" 493 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-31: 493 -> 495, and NOT because of the release that found it. TWO new tests in the WEB
+# module -- the audit-trail size budget and server log rotation -- landed before 2.0.14 shipped and
+# the count was not moved with them, so this assertion had been failing since 2026-08-28 and 2.0.14
+# went out over it. Measured rather than reasoned: the count at 532a63f (Release 2.0.14) is 495,
+# identical to the count now, and `git diff -G'formerly Orinda Software Ltd' --name-status` across
+# that span lists exactly those two additions.
+#
+# THE RELEASE THAT TRIPPED IT ADDED NOTHING TO THE NUMBER, which is worth saying because the
+# obvious reading of a +2 at release time is "the release did it". 2.0.15 adds three notice-bearing
+# files in the WEB module (two components for the tool-description editor and one test) and deletes
+# three (the per-object description page's row model and two of its tests). Net zero, verified as a
+# set difference over 532a63f..HEAD rather than by the arithmetic.
+#
+# So this is the SECOND consecutive time the entry above's warning has come true -- the gate is not
+# in `mvn test`, a green six-box estate says nothing about it, and it is therefore only ever run by
+# a release, which is the most expensive place to learn. Worth wiring into the ordinary suite.
+expect "copyright chain-of-title lines" 495 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

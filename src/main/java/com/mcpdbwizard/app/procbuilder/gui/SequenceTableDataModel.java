@@ -277,6 +277,14 @@ public class SequenceTableDataModel extends RowSetTableModel {
                         tempSequence.mcpDescriptions.put(
                                 SingleNamespaceObject.MCP_DESC_SOLE, theDesc);
                     }
+                    // The config's own spelling of this sequence, so the generator can report
+                    // which config entry its _nextval tool was described by -- see
+                    // SingleNamespaceObject.mcpConfigId. Set unconditionally, NOT only when a
+                    // description exists: the web panel needs the mapping in order to offer a
+                    // FIRST description, which is precisely the case where there is none yet.
+                    tempSequence.mcpConfigId = theRowSet.getString(OWNER_COLUMN)
+                            + SingleNamespaceObject.MCP_ID_SEP
+                            + theRowSet.getString(OBJECT_NAME_COLUMN);
 
                     tempArrayList.add(tempSequence);
                 }

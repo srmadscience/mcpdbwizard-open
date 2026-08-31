@@ -7251,6 +7251,9 @@ public class SAAdminWrangler extends SADbWrangler {
     private void mcpToolNameLine(JavaChunk theJavaCode, String theToolName, String theDbObject,
                                  String theObjectType) {
         theJavaCode.print("                .name(\"" + theToolName + "\")");
+        // Held for the .description(...) line that follows, which records the config entry this
+        // tool was described by; see mcpPendingToolName for why it is carried rather than passed.
+        mcpPendingToolName = theToolName;
         if (mcpPrometheus) {
             mcpMetricDescriptions.add(new String[] {theToolName,
                     theDbObject == null ? "" : theDbObject, theObjectType});
@@ -7518,12 +7521,81 @@ public class SAAdminWrangler extends SADbWrangler {
     /** Marks the machine-readable sibling of an {@code MCP: skipping} line. */
     public static final String MCP_UNEXPOSED_PREFIX = "MCP-UNEXPOSED|";
 
+    /**
+     * Report, in a form a program can read, WHICH CONFIG ENTRY a tool got its description from.
+     *
+     * <p><b>Why the editor cannot work this out for itself.</b> A tool name is a lower-cased,
+     * punctuation-stripped Oracle name with an overload number or a constraint name sometimes
+     * appended, and one config entry routinely yields several tools. Nothing in the
+     * {@code tools/list} payload carries the config's spelling of the object, so an editor showing
+     * that payload has no way back to the key the description is stored under. Only the generator
+     * knows the mapping; the same argument as {@link #mcpMetricDescriptions}, and the same shape as
+     * {@link #mcpUnexposed}.
+     *
+     * <p>Pipe-delimited with the TOOL NAME LAST, for the same reason the reason comes last there: a
+     * tool name cannot contain a pipe today, and putting it last means it could not break the parse
+     * if that ever changed.
+     *
+     * <p>Skipped, rather than written with a hole in it, when nothing carried a config identity —
+     * a line naming no object would make the editor offer a box that writes nowhere, which is worse
+     * than the read-only row a missing line produces.
+     */
+    private void mcpToolKey(String theKind, String theConfigId, String theOperation,
+                            String theToolName) {
+        if (theConfigId == null || theConfigId.trim().length() == 0 || theToolName == null) {
+            return;
+        }
+        mrLog.info(MCP_TOOL_KEY_PREFIX + theKind + "|" + theConfigId + "|"
+                + (theOperation == null ? "" : theOperation) + "|" + theToolName);
+    }
+
+    /** Marks a line mapping one emitted tool back to the config entry it was described by. */
+    public static final String MCP_TOOL_KEY_PREFIX = "MCP-TOOL-KEY|";
+
+    /**
+     * The tool name {@link #mcpToolNameLine} last emitted, waiting to be paired with its config key
+     * by {@link #mcpToolDescriptionLine}.
+     *
+     * <p><b>Carried rather than passed a second time on purpose.</b> The key line is only useful if
+     * its tool name is EXACTLY the one in {@code tools/list}; handing the same string to both
+     * methods would let the two drift, and a key naming a tool that does not exist produces a row
+     * the editor silently cannot edit. Taking it from the emitter that wrote it cannot drift. The
+     * two calls sit one line apart at all 13 sites, which is what makes this safe.
+     */
+    private String mcpPendingToolName = null;
+
+    /**
+     * Emit a tool's {@code .description(...)} line and record which config entry it came from.
+     *
+     * @param theKind      {@code table} (duality views included — the config stores them as
+     *                     tables), {@code sequence}, {@code procedure} or {@code sql}. These are
+     *                     the web editor's own type words; they are a property of the CONFIG, not
+     *                     of the generator, which is why they are spelled the same in both.
+     * @param theConfigId  the entry's identity as the config spells it
+     * @param theOperation the operation key within that entry, or
+     *                     {@link SingleNamespaceObject#MCP_DESC_SOLE} for a single-tool object
+     */
     private void mcpToolDescriptionLine(JavaChunk theJavaCode, String theGeneratedDefault,
-                                        String theOverride) {
+                                        String theOverride, String theKind, String theConfigId,
+                                        String theOperation) {
         String theText = (theOverride == null)
                 ? theGeneratedDefault
                 : javaStringLiteral(theOverride);
         theJavaCode.print("                .description(\"" + theText + "\")");
+
+        String theToolName = mcpPendingToolName;
+        mcpPendingToolName = null;
+        if (theToolName == null) {
+            // The pair was broken: a .name(...) line was not emitted immediately above this one.
+            // Said out loud rather than swallowed -- the tool still works, but its description
+            // becomes uneditable in the web panel, which is exactly the kind of silent loss this
+            // repository keeps being bitten by.
+            mrLog.warning("MCP: no tool name paired with a description for " + theKind + " "
+                    + theConfigId + " (" + theOperation + "); its description will not be"
+                    + " editable in the web tool panel.");
+            return;
+        }
+        mcpToolKey(theKind, theConfigId, theOperation, theToolName);
     }
 
     /** {@code OWNER.OBJECT} for the metrics label, falling back to the bare name when unknown. */
@@ -7824,7 +7896,8 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("return new SyncToolSpecification.Builder()");
         theJavaCode.print("        .tool(Tool.builder()");
         mcpToolNameLine(theJavaCode, toolName, mcpQualifiedOracleName(theFunction), "procedure");
-        mcpToolDescriptionLine(theJavaCode, description, theFunction.mcpSoleDescription());
+        mcpToolDescriptionLine(theJavaCode, description, theFunction.mcpSoleDescription(),
+                "procedure", theFunction.mcpConfigId, SingleNamespaceObject.MCP_DESC_SOLE);
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(" + propertyArgs + ")"
                 + (requiredArgs.length() > 0 ? ", \"required\", java.util.Arrays.asList(" + requiredArgs + ")" : "")
                 + ", \"additionalProperties\", Boolean.FALSE))");
@@ -7955,7 +8028,8 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("return new SyncToolSpecification.Builder()");
         theJavaCode.print("        .tool(Tool.builder()");
         mcpToolNameLine(theJavaCode, toolName, theStatement.realFilename, "statement");
-        mcpToolDescriptionLine(theJavaCode, description, theStatement.getMcpDescription());
+        mcpToolDescriptionLine(theJavaCode, description, theStatement.getMcpDescription(),
+                "sql", theStatement.originalFilename, SingleNamespaceObject.MCP_DESC_SOLE);
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(" + propertyArgs + ")"
                 + (params.length > 0 ? ", \"required\", java.util.Arrays.asList(" + requiredArgs + ")" : "")
                 + ", \"additionalProperties\", Boolean.FALSE))");
@@ -8002,7 +8076,8 @@ public class SAAdminWrangler extends SADbWrangler {
         mcpToolNameLine(theJavaCode, toolName, mcpQualifiedOracleName(theSequence), "sequence");
         mcpToolDescriptionLine(theJavaCode,
                 javaStringLiteral(mcpDefaultSequenceDescription(theSequence.oracleName)),
-                theSequence.mcpSoleDescription());
+                theSequence.mcpSoleDescription(),
+                "sequence", theSequence.mcpConfigId, SingleNamespaceObject.MCP_DESC_SOLE);
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(), \"additionalProperties\", Boolean.FALSE))");
         theJavaCode.print("                .annotations(ToolAnnotations.builder().readOnlyHint(false).build())");
         theJavaCode.print("                .build())");
@@ -8381,7 +8456,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     "Fetch one row from table " + info.tableOracleName
                     + " by primary key (" + pkSummary + "). Columns: " + columnSummary + "." + skippedNote
                     + " Returns the row as a JSON object, or {\\\"found\\\":false}.",
-                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_GET_BY_PK));
+                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_GET_BY_PK),
+                    "table", info.tableConfigId, com.mcpdbwizard.schema.Table.OP_GET_BY_PK);
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(" + pkPropertyArgs
                     + "), \"required\", java.util.Arrays.asList(" + pkRequiredArgs + "), \"additionalProperties\", Boolean.FALSE))");
             theJavaCode.print("                .annotations(ToolAnnotations.builder().readOnlyHint(true).build())");
@@ -8414,7 +8490,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     "Insert a row into table " + info.tableOracleName
                     + ". Columns: " + columnSummary + ". " + identityNote + skippedNote
                     + " Returns the inserted row (including any database-generated key).",
-                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_INSERT));
+                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_INSERT),
+                    "table", info.tableConfigId, com.mcpdbwizard.schema.Table.OP_INSERT);
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
             theJavaCode.print("                        \"row\", schemaMap(\"type\", \"object\", \"description\", \"The row to insert\", \"properties\", schemaMap("
                     + insertPropertyArgs + "), \"additionalProperties\", Boolean.FALSE)");
@@ -8449,7 +8526,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     + " by primary key (" + pkSummary + "). Full-row replace: the row object must carry the key columns"
                     + " AND every column to keep - columns omitted from the row are written as NULL. Columns: "
                     + columnSummary + "." + skippedNote,
-                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_UPDATE));
+                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_UPDATE),
+                    "table", info.tableConfigId, com.mcpdbwizard.schema.Table.OP_UPDATE);
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
             theJavaCode.print("                        \"row\", schemaMap(\"type\", \"object\", \"description\", \"The full replacement row, including the primary key\", \"properties\", schemaMap("
                     + updatePropertyArgs + "), \"additionalProperties\", Boolean.FALSE)");
@@ -8482,7 +8560,8 @@ public class SAAdminWrangler extends SADbWrangler {
             mcpToolDescriptionLine(theJavaCode,
                     "Delete the row in table " + info.tableOracleName
                     + " with primary key (" + pkSummary + ").",
-                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_DELETE));
+                    info.descriptionFor(com.mcpdbwizard.schema.Table.OP_DELETE),
+                    "table", info.tableConfigId, com.mcpdbwizard.schema.Table.OP_DELETE);
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(" + pkPropertyArgs
                     + "), \"required\", java.util.Arrays.asList(" + pkRequiredArgs + "), \"additionalProperties\", Boolean.FALSE))");
             theJavaCode.print("                .annotations(ToolAnnotations.builder().readOnlyHint(false).destructiveHint(true).idempotentHint(true).build())");
@@ -8546,7 +8625,9 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("return new SyncToolSpecification.Builder()");
             theJavaCode.print("        .tool(Tool.builder()");
             mcpToolNameLine(theJavaCode, lookupToolName, mcpQualifiedTableName(info), "table");
-            mcpToolDescriptionLine(theJavaCode, description, info.descriptionFor(lookup.kind.toUpperCase() + "_" + lookup.toolNameBasis));
+            String lookupOperation = lookup.kind.toUpperCase() + "_" + lookup.toolNameBasis;
+            mcpToolDescriptionLine(theJavaCode, description, info.descriptionFor(lookupOperation),
+                    "table", info.tableConfigId, lookupOperation);
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(" + keyPropertyArgs
                     + "), \"required\", java.util.Arrays.asList(" + keyRequiredArgs + "), \"additionalProperties\", Boolean.FALSE))");
             theJavaCode.print("                .annotations(ToolAnnotations.builder().readOnlyHint(true).build())");
@@ -8734,7 +8815,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     "Return every document in duality view " + theView.oracleName
                 + " as a JSON array. " + fieldListing
                 + "Each document also carries _id and _metadata.etag (needed for a safe update).",
-                    theView.mcpDescriptionFor("DOC_GET_ALL"));
+                    theView.mcpDescriptionFor("DOC_GET_ALL"),
+                    "table", theView.mcpConfigId, "DOC_GET_ALL");
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
         theJavaCode.print("                        \"maxDocuments\", schemaMap(\"type\", \"integer\", \"description\", \"Return at most this many documents\")");
         theJavaCode.print("                ), \"additionalProperties\", Boolean.FALSE))");
@@ -8790,7 +8872,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     "Fetch one document from duality view " + theView.oracleName
                 + " by its _id: " + idDescription + ". " + fieldListing
                 + "Returns the full document including _metadata.etag (needed for a safe update).",
-                    theView.mcpDescriptionFor("DOC_GET_BY_ID"));
+                    theView.mcpDescriptionFor("DOC_GET_BY_ID"),
+                    "table", theView.mcpConfigId, "DOC_GET_BY_ID");
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
         theJavaCode.print("                        \"docId\", " + docIdParamSchema);
         theJavaCode.print("                ), \"required\", java.util.Arrays.asList(\"docId\"), \"additionalProperties\", Boolean.FALSE))");
@@ -8821,7 +8904,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     "Insert a new document into duality view " + theView.oracleName
                     + ". " + fieldListing + idInsertNote
                     + "Unknown fields are rejected by the database.",
-                    theView.mcpDescriptionFor("DOC_INS"));
+                    theView.mcpDescriptionFor("DOC_INS"),
+                    "table", theView.mcpConfigId, "DOC_INS");
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
             theJavaCode.print("                        \"document\", schemaMap(\"type\", \"object\", \"description\", \"The document body\", \"properties\", schemaMap(" + insertPropertyArgs + ")" + documentSchemaClose);
             theJavaCode.print("                ), \"required\", java.util.Arrays.asList(\"document\"), \"additionalProperties\", Boolean.FALSE))");
@@ -8855,7 +8939,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     + "If it carries _metadata.etag (as documents read through this view do), the update fails "
                     + "when the stored document has changed since it was read - re-read and retry. "
                     + "Omitting _metadata forces an unconditional overwrite.",
-                    theView.mcpDescriptionFor("DOC_UPD"));
+                    theView.mcpDescriptionFor("DOC_UPD"),
+                    "table", theView.mcpConfigId, "DOC_UPD");
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
             theJavaCode.print("                        \"document\", schemaMap(\"type\", \"object\", \"description\", \"The full replacement document, including _id\", \"properties\", schemaMap(" + updatePropertyArgs + ")" + documentSchemaClose);
             theJavaCode.print("                ), \"required\", java.util.Arrays.asList(\"document\"), \"additionalProperties\", Boolean.FALSE))");
@@ -8886,7 +8971,8 @@ public class SAAdminWrangler extends SADbWrangler {
             mcpToolDescriptionLine(theJavaCode,
                     "Delete the document in duality view " + theView.oracleName
                     + " with this _id: " + idDescription + ".",
-                    theView.mcpDescriptionFor("DOC_DEL"));
+                    theView.mcpDescriptionFor("DOC_DEL"),
+                    "table", theView.mcpConfigId, "DOC_DEL");
             theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(");
             theJavaCode.print("                        \"docId\", " + docIdParamSchema);
             theJavaCode.print("                ), \"required\", java.util.Arrays.asList(\"docId\"), \"additionalProperties\", Boolean.FALSE))");
