@@ -5498,6 +5498,41 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("java.util.List<SyncToolSpecification> theTools = java.util.Arrays.asList(" + toolInvocationListing + ");");
         theJavaCode.print("");
         if (comments) {
+            theJavaCode.print("// A generated DAO prepares each statement ONCE and keeps the handle, so a session's open");
+            theJavaCode.print("// cursor count grows with the number of DISTINCT tools it is asked for and never with how");
+            theJavaCode.print("// often they are called. Past open_cursors (300 by default) that is ORA-01000 - which");
+            theJavaCode.print("// clears itself and recurs, so it looks like an intermittent database fault rather than a");
+            theJavaCode.print("// config that has outgrown a parameter. Warned about here because no load test can find");
+            theJavaCode.print("// it: the cost is per tool, so calling four tools a million times opens four cursors.");
+            theJavaCode.print("// Counted from theTools rather than a generation-time constant, so it cannot drift.");
+            theJavaCode.print("//");
+            theJavaCode.print("// WRAPPED, because it needs a connection and it is only a warning. The connection this");
+            theJavaCode.print("// borrows is one the first tool call would have opened anyway, but opening it HERE means");
+            theJavaCode.print("// a database that is not up yet would throw during start-up - and refusing to start over a");
+            theJavaCode.print("// diagnostic would be a worse trade than not knowing.");
+        }
+        theJavaCode.print("try");
+        theJavaCode.print("  {");
+        if (mcpPooled) {
+            theJavaCode.print("  thePool.withFactory(theFactory -> {");
+            theJavaCode.print("    com.mcpdbwizard.pub.OpenCursorCheck.warnIfToolsExceedCursors("
+                    + "theFactory.theConnection, theTools.size(), AUDIT_LOG);");
+            theJavaCode.print("    return null; });");
+        } else {
+            if (comments) {
+                theJavaCode.print("  // Idempotent: this has already run above when a ServiceImpl needed the connection.");
+            }
+            theJavaCode.print("  theFactory.confirmConnection();");
+            theJavaCode.print("  com.mcpdbwizard.pub.OpenCursorCheck.warnIfToolsExceedCursors("
+                    + "theFactory.theConnection, theTools.size(), AUDIT_LOG);");
+        }
+        theJavaCode.print("  }");
+        theJavaCode.print("catch (Exception e)");
+        theJavaCode.print("  {");
+        theJavaCode.print("  AUDIT_LOG.warning(\"Could not compare the tool count against open_cursors: \" + e.getMessage());");
+        theJavaCode.print("  }");
+        theJavaCode.print("");
+        if (comments) {
             theJavaCode.print("// Default transport is stdio; run with args \"http [port]\" to serve the MCP");
             theJavaCode.print("// Streamable HTTP transport at " + (mcpHttpsFlag ? "https" : "http") + "://<host>:<port>/mcp (default port 8080).");
         }

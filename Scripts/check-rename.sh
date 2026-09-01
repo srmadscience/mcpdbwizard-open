@@ -321,7 +321,38 @@ else
 # So this is the SECOND consecutive time the entry above's warning has come true -- the gate is not
 # in `mvn test`, a green six-box estate says nothing about it, and it is therefore only ever run by
 # a release, which is the most expensive place to learn. Worth wiring into the ordinary suite.
-expect "copyright chain-of-title lines" 495 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-08-31 (later the same day): 495 -> 496. ONE new file in the APP module, one notice --
+# BrandingInvariantsTest, which runs THIS SCRIPT as part of `mvn test` so that a broken invariant
+# stops costing a release to discover. A plain +1, predicted before the gate ran and then confirmed
+# by it: the first run of the new test reported 496 against 495 and named nothing else.
+#
+# That is the check working on its first day, and it is worth leaving on the record: a guard whose
+# only trigger was a release had gone wrong twice unnoticed, and the very act of wiring it into the
+# suite moved the number it exists to protect.
+# 2026-09-01: 496 -> 501. FIVE files, one notice each, and NONE of them from the work that found
+# it -- the deploy/ targets of PRs #2 and #3: aws/ecs-ec2.yaml, backup-volume.sh,
+# macos/install.sh, macos/mcpdbwizard-start.sh, ubuntu/install.sh. The count was not moved with
+# them, so this assertion had been failing since #2 and every commit after it was red.
+#
+# THE ENTRY ABOVE PREDICTED THIS AND NAMED THE WRONG REMEDY, which is the part worth keeping. It
+# closes by saying a guard only a release runs is the most expensive place to learn, and that
+# wiring it into `mvn test` fixes that. The wiring worked -- this was caught by an ordinary
+# `mvn -pl app test`, not by a stopped release. It still went unnoticed for two commits, because
+# those commits were deploy/ documentation and nobody ran the APP suite over them.
+#
+# So the lesson has moved on. It is not "wire it into the suite" any more, that is done. It is that
+# a REPOSITORY-WIDE total is moved by files nowhere near the module whose suite asserts it, and the
+# app suite is the only place this runs. Worth running it from the web module too, or from a hook.
+# 2026-09-01 (later the same day): 501 -> 504. THREE new files, one notice each, all from the
+# open-cursor work: the check itself in pub, its test, and Scripts/loadtest/mcp-tool-scaling.sh.
+# A plain +3, predicted before the gate ran and confirmed by it -- and confirmed the other way too,
+# by stashing exactly those three and watching the count fall back to 501.
+#
+# THAT STASH IS THE ENTRY WORTH KEEPING. `git stash show --name-only` printed NOTHING for it, which
+# is this repository's known trap and reads exactly like a control that silently took nothing. It
+# had taken them: the run that followed reported 501 rather than 504, which is the proof. Check a
+# control by its EFFECT on the measurement, never by the stash listing.
+expect "copyright chain-of-title lines" 504 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
