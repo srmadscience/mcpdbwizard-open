@@ -5171,8 +5171,23 @@ public class SAAdminWrangler extends SADbWrangler {
         // it from a static initializer is an illegal forward reference. A LIBRARY constant is not:
         // com.mcpdbwizard.pub.McpDates.ISO_PATTERN is the same value the helpers below use, so the
         // two can no longer drift apart and there is nothing left to keep in step by hand.
+        //
+        // WHAT THIS LINE DOES NOT DO, and did not say until 2026-09-01: handing Jackson the PATTERN
+        // gets none of the PARSING that McpDates wraps around it. A SimpleDateFormat on that
+        // pattern stops at the end of it and ignores what follows -- so a +05:30 offset and a .500
+        // fraction were both read as trailing junk and DISCARDED -- and it is lenient, so
+        // 2003-13-45 arrived as 2004-02-14. Measured, all three, against this very mapper. Only the
+        // bare-date rejection was ever visible; the rest were silently wrong answers.
+        //
+        // So the parsing comes from the MODULE below, and this line is now the FALLBACK for a date
+        // type the generator does not currently emit. Keep it: without it such a type would cross
+        // as a UTC epoch instant, which is the defect it was added for in the first place.
         theJavaCode.print("        .defaultDateFormat(new java.text.SimpleDateFormat(com.mcpdbwizard.pub.McpDates.ISO_PATTERN))");
         theJavaCode.print("        .defaultTimeZone(java.util.TimeZone.getDefault())");
+        // McpDates itself, for java.util.Date and java.sql.Timestamp -- the only two date types a
+        // generated class declares. This is what makes a DATE inside a RECORD cross exactly as a
+        // DATE parameter of its own does; they were four different behaviours until 2.0.17.
+        theJavaCode.print("        .addModule(new com.mcpdbwizard.pub.McpDateModule())");
         theJavaCode.print("        .build();");
         if (comments) {
             theJavaCode.print("// Suppresses the generated record classes' own plumbing from JSON, BY NAME.");
@@ -5201,45 +5216,22 @@ public class SAAdminWrangler extends SADbWrangler {
 
         // ---- main ----------------------------------------------------------
 
-        String instructionsText = "";
-
-        // The author's own words go FIRST -- a model reads instructions top-down, and this is
-        // the part the generator cannot know: what the schema is for, how the objects relate,
-        // and what not to attempt. The generated inventory still follows, so a config that
-        // never set MCP_INSTRUCTIONS emits a byte-identical server.
-        //
-        // ESCAPED HERE, and note the generated clauses below are NOT: they are built inline
-        // with their own quotes already escaped ({\"executed\":true}), so this is the only
-        // text on this line that has not been through a Java-literal escape. Newlines are
-        // refused upstream at the form, because javaStringLiteral does not handle them and a
+        // ESCAPED HERE, and note the generated clauses in mcpServerInstructions are NOT: they are
+        // built inline with their own quotes already escaped ({\"executed\":true}), so the author's
+        // is the only text in that string that has not been through a Java-literal escape. Newlines
+        // are refused upstream at the form, because javaStringLiteral does not handle them and a
         // raw one fails as a compile error across the whole generated tree.
+        String escapedAuthorInstructions = null;
         if (mcpInstructions != null && mcpInstructions.trim().length() > 0) {
-            instructionsText = javaStringLiteral(mcpInstructions.trim()) + " ";
+            escapedAuthorInstructions = javaStringLiteral(mcpInstructions.trim());
         }
 
-        if (mcpViewList.size() > 0) {
-            instructionsText = "Document CRUD over JSON-relational duality view(s) "
-                    + viewNameListing + ". Documents carry a server-maintained _id and _metadata.etag; "
-                    + "an update whose document carries _metadata.etag is rejected when the stored "
-                    + "document changed since it was read (re-read and retry). Omitting _metadata "
-                    + "forces an unconditional overwrite. ";
-        }
-        if (haveTables) {
-            instructionsText = instructionsText + "Exposes row CRUD on table(s) " + tableNameListing
-                    + " (get_by_pk / insert / update / delete), rows crossing as JSON objects keyed by column name. ";
-        }
-        if (haveFunctions) {
-            instructionsText = instructionsText + "Also exposes PL/SQL routine(s) " + functionNameListing
-                    + " as tools; each takes the routine's IN parameters and returns its output as JSON. ";
-        }
-        if (haveSql) {
-            instructionsText = instructionsText + "Exposes user SQL statement(s) " + sqlNameListing
-                    + " as tools; a query returns its result rows as a JSON array, a DML statement returns {\\\"executed\\\":true}. ";
-        }
-        if (haveSequences) {
-            instructionsText = instructionsText + "Exposes sequence(s) " + sequenceNameListing
-                    + " as <sequence>_nextval tools returning the next value.";
-        }
+        String instructionsText = mcpServerInstructions(escapedAuthorInstructions,
+                mcpViewList.size() > 0, viewNameListing,
+                haveTables, tableNameListing,
+                haveFunctions, functionNameListing,
+                haveSql, sqlNameListing,
+                haveSequences, sequenceNameListing);
 
         // The McpServer builder chain (serverInfo/instructions/capabilities/tools/build) is the same
         // for both transports, so build the tool list first and emit the chain per transport below.
@@ -7371,23 +7363,105 @@ public class SAAdminWrangler extends SADbWrangler {
      * and cannot be called from a database-free test, so the emitter interpolates THESE values and
      * the test asserts them. One source of truth, checkable without an Oracle instance.
      *
-     * <p>The date pattern comes from {@link com.mcpdbwizard.pub.McpDates#ISO_PATTERN} rather than
-     * being retyped, so the sentence cannot drift from the format {@code RECORD_MAPPER} is pinned
-     * to. That drift is exactly what makes a description worse than none: it would be believed.
+     * <p><b>The DATE note used to warn about an ASYMMETRY, and there is no longer one to warn
+     * about.</b> It read "the T form is REQUIRED inside a record, unlike a scalar date parameter" —
+     * true when written, because a record's fields went through a {@code SimpleDateFormat} on
+     * {@code ISO_PATTERN} rather than through {@code McpDates}. {@code McpDateModule} closed that in
+     * 2.0.17, so the sentence describing the difference had to go with it: a schema that names a
+     * restriction which is not enforced is worse than one that says nothing, because a caller
+     * believes it and never tries the form that works.
+     *
+     * <p>What it says now is the SAME set the scalar parameter's label offers, deliberately, and
+     * both are the set {@link com.mcpdbwizard.pub.McpDates} actually accepts.
      *
      * @param theKind {@link #RECORD_FIELD_DATE} or {@link #RECORD_FIELD_RAW}
      * @return the description, or null for a kind that needs no note
      */
     static String recordFieldCrossingNote(String theKind) {
         if (RECORD_FIELD_DATE.equals(theKind)) {
-            return "ISO-8601 date-time, pattern " + com.mcpdbwizard.pub.McpDates.ISO_PATTERN
-                    + " -- the T form is REQUIRED inside a record, unlike a scalar date parameter,"
-                    + " which also accepts a bare 1980-01-01";
+            return "date, ISO-8601: a date, optionally a time, optionally a zone offset --"
+                    + " 1980-01-01, 1980-01-01T09:30:00, 1980-01-01T09:30:00.500 or"
+                    + " 1980-01-01T09:30:00+05:30. An offset is converted to the server's zone;"
+                    + " an epoch millisecond number is also accepted";
         }
         if (RECORD_FIELD_RAW.equals(theKind)) {
             return "base64, NOT hex, e.g. 3q2+7w== for the four bytes DE AD BE EF";
         }
         return null;
+    }
+
+    /**
+     * The generated server's {@code instructions} string: the author's own words, then the
+     * inventory of what this config exposes.
+     *
+     * <p><b>The author's words go FIRST</b> — a model reads instructions top-down, and that is the
+     * part the generator cannot know: what the schema is for, how the objects relate, and what not
+     * to attempt. The generated inventory still follows, so a config that never set
+     * {@code MCP_INSTRUCTIONS} emits a byte-identical server.
+     *
+     * <p><b>Every clause APPENDS.</b> The duality-view clause used to assign, which silently threw
+     * away the author's text on any config that exposed a view — the console accepted it, stored
+     * it, and read it back onto the Service Options tab, so every surface a user could see agreed
+     * it had been saved. The only place it was missing was this string, which nobody reads
+     * directly. That is why the clauses are all one shape now and why
+     * {@code McpServerInstructionsTest} asserts the author's text survives each surface: a clause
+     * added later has an example to copy and a test that fails if it copies the wrong one.
+     *
+     * <p>Extracted from the emitter so it can be asserted without a database. The strings here are
+     * interpolated verbatim into the generated source, so what this returns is what a client reads.
+     *
+     * @param theEscapedAuthorInstructions the author's text, ALREADY through
+     *                                     {@link #javaStringLiteral}, or null when unset
+     * @param theHaveViews                 whether any duality view is exposed
+     * @param theViewListing               comma-separated view names
+     * @param theHaveTables                whether any table is exposed
+     * @param theTableListing              comma-separated table names
+     * @param theHaveFunctions             whether any PL/SQL routine is exposed
+     * @param theFunctionListing           comma-separated routine names
+     * @param theHaveSql                   whether any user SQL statement is exposed
+     * @param theSqlListing                comma-separated statement names
+     * @param theHaveSequences             whether any sequence is exposed
+     * @param theSequenceListing           comma-separated sequence names
+     * @return the instructions text, ready to interpolate into the emitted server
+     */
+    static String mcpServerInstructions(String theEscapedAuthorInstructions,
+            boolean theHaveViews, String theViewListing,
+            boolean theHaveTables, String theTableListing,
+            boolean theHaveFunctions, String theFunctionListing,
+            boolean theHaveSql, String theSqlListing,
+            boolean theHaveSequences, String theSequenceListing) {
+
+        String theInstructions = "";
+
+        if (theEscapedAuthorInstructions != null && theEscapedAuthorInstructions.length() > 0) {
+            theInstructions = theEscapedAuthorInstructions + " ";
+        }
+
+        if (theHaveViews) {
+            theInstructions = theInstructions + "Document CRUD over JSON-relational duality view(s) "
+                    + theViewListing + ". Documents carry a server-maintained _id and _metadata.etag; "
+                    + "an update whose document carries _metadata.etag is rejected when the stored "
+                    + "document changed since it was read (re-read and retry). Omitting _metadata "
+                    + "forces an unconditional overwrite. ";
+        }
+        if (theHaveTables) {
+            theInstructions = theInstructions + "Exposes row CRUD on table(s) " + theTableListing
+                    + " (get_by_pk / insert / update / delete), rows crossing as JSON objects keyed by column name. ";
+        }
+        if (theHaveFunctions) {
+            theInstructions = theInstructions + "Also exposes PL/SQL routine(s) " + theFunctionListing
+                    + " as tools; each takes the routine's IN parameters and returns its output as JSON. ";
+        }
+        if (theHaveSql) {
+            theInstructions = theInstructions + "Exposes user SQL statement(s) " + theSqlListing
+                    + " as tools; a query returns its result rows as a JSON array, a DML statement returns {\\\"executed\\\":true}. ";
+        }
+        if (theHaveSequences) {
+            theInstructions = theInstructions + "Exposes sequence(s) " + theSequenceListing
+                    + " as <sequence>_nextval tools returning the next value.";
+        }
+
+        return theInstructions;
     }
 
     static String mcpParamTypeLabel(String theRawOracleTypeName, String theJavaType) {

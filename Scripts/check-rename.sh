@@ -352,7 +352,15 @@ else
 # is this repository's known trap and reads exactly like a control that silently took nothing. It
 # had taken them: the run that followed reported 501 rather than 504, which is the proof. Check a
 # control by its EFFECT on the measurement, never by the stash listing.
-expect "copyright chain-of-title lines" 504 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-01 (third move the same day): 504 -> 505. ONE new file, one notice --
+# McpServerInstructionsTest, for the duality-view clause that discarded the author's instructions.
+# Moved WITH the commit that adds the file this time rather than after a red suite, which is what
+# the two entries above were both asking for.
+# 2026-09-01 (fourth move the same day, and the reason there were four): 505 -> 507. TWO new files,
+# one notice each -- McpDateModule in pub and its test -- for the record-date parsing fix. Four
+# moves in a day is not churn, it is what a repository-wide total does when the work is spread
+# across modules; the entry above asks for a hook, and this is the fourth piece of evidence for it.
+expect "copyright chain-of-title lines" 507 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

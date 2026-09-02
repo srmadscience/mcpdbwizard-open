@@ -5,6 +5,11 @@
 > of them **overturn the sweep's own conclusions** — read §1 before doing any of the work, because
 > the highest-severity item in the report is not a product defect at all.
 >
+> **Still true at 2.0.16 (re-checked 2026-09-01), with ONE exception.** Every defect here is present
+> in the source at `810f450` and none of the eight phases has been started — except §1.3, which was
+> found and fixed on that date. It is in the same block as §1.2, so **Phase 1 now starts from an
+> extracted, tested function rather than from a string built inline in the emitter.**
+>
 > Findings measured against a **26ai Free server (23.26.0.0.0, PDB `FREEPDB1`, user `ORINDADEMO`)**
 > — the host `docs/testrun_260822.md` could not identify. Which Oracle line the numbers came from is
 > the part that matters and is kept; the box itself is inventory and is deliberately not named here.
@@ -27,6 +32,7 @@ the best part of it. Its **ranking** is what needs correcting.
 | 4 | Index-by collection READ fails `ORA-06532` | **REAL, and not covered by any existing plan** | needs investigation |
 | — | `paramXxx` Java field names leak outbound | **REAL**, known family | `app/docs/mcp-record-crossing-plan.md` |
 | — | Server stopped twice mid-sweep | **EXPLAINED** — two configs, one licence slot | `/data/*.json`, `Licence.java:95` |
+| — | Author's `MCP_INSTRUCTIONS` discarded when the config has a duality view | **FIXED 2026-09-01**, see §1.3 | `SAAdminWrangler.mcpServerInstructions` |
 
 ### 1.1 Why item 1 is not a defect
 
@@ -75,6 +81,76 @@ before any tool listing. A model told it can `insert` will attempt it and get "u
 and, per the `authorization-is-the-config-file` principle, read-only-ness here *is* the
 authorization decision. Advertising writes misdescribes the security posture of the config.
 
+### 1.3 A SECOND defect in the same block — FIXED 2026-09-01: the author's instructions were DISCARDED when the config had a duality view
+
+Not from the sweep — found while re-checking the public known-issues page against the source at
+2.0.16, because that page tells a reader to work around §1.2 by writing their own instructions. On a
+config with a duality view, that workaround does nothing.
+
+```java
+// SAAdminWrangler.java:5216
+if (mcpInstructions != null && mcpInstructions.trim().length() > 0) {
+    instructionsText = javaStringLiteral(mcpInstructions.trim()) + " ";     // author's words
+}
+if (mcpViewList.size() > 0) {
+    instructionsText = "Document CRUD over JSON-relational duality view(s) " + ...   // ASSIGNS
+}
+if (haveTables) {
+    instructionsText = instructionsText + "Exposes row CRUD on table(s) " + ...      // appends
+}
+```
+
+The view clause **assigns** where every clause after it appends, so `MCP_INSTRUCTIONS` is composed
+first and then thrown away. A config with tables, routines, SQL statements or sequences and **no**
+view is unaffected — which is why this survived: the feature was built and tested on configs
+without a duality view.
+
+**It fails the same way the 2.0.15 description bug did**, and that is the part worth carrying into
+the fix. The console accepts the text, stores it in the config, and reads it back onto the Service
+Options tab, so every surface a user can see agrees that it was saved. The only place it is missing
+is the generated server's `initialize` response, which nobody looks at. Silent storage plus a silent
+drop.
+
+**The contrast that makes it obviously a slip rather than a decision** is 200 lines earlier, at
+`:5015`: `surfaceSummary` builds the same inventory from the same four flags for the server
+*description*, and its view clause appends correctly (`surfaceSummary + (length > 0 ? " and " : "")`).
+Two blocks, same shape, one right.
+
+**Nothing tests the composition.** `McpInstructionsConfigKeyTest` covers the config key —
+that the value round-trips through `.pb2` and JSON — and no test asserts what the emitted server
+publishes. A test over the instruction-building text with an author string plus a view is what
+would have caught it, and Phase 1's test needs that case added.
+
+**Correction to §1.2 while here: "the same text at `:5019`" is stale.** There is now ONE site
+emitting the CRUD sentence (`:5229`). The `:5019` block is `surfaceSummary` above, which carries
+different text for a different field. Phase 1's instruction that "both sites move together" still
+holds — the description and the instructions must agree — but they are not two copies of one string.
+
+**FIXED 2026-09-01, before Phase 1 rather than with it** — it is a data-loss bug needing no
+decision, and Phase 1 is still blocked on D1. The clause now appends like every other.
+
+**The composition was extracted to `SAAdminWrangler.mcpServerInstructions` to make it testable.**
+It was built inline inside `generateMcpServerClass`, which needs a dictionary connection, so there
+was nowhere to assert it from without a database — the same reason `recordFieldCrossingNote` and
+`mcpParamTypeLabel` are extracted statics. **Phase 1 inherits this:** the CRUD-flag rewrite now has
+a function to change and a test to extend, instead of an emitter to reach into.
+
+**`McpServerInstructionsTest` walks each surface ONE AT A TIME with author text present**, which is
+the shape that matters here. The bug was invisible to any test that switched several surfaces on at
+once, because only the view clause assigned — five of the six single-surface cases pass either way.
+The test also pins the no-author inventory byte-for-byte, so a config that never set
+`MCP_INSTRUCTIONS` is provably unchanged, and asserts the `{\"executed\":true}` escaping survives a
+tidy (those backslashes are for the GENERATED file, not this one).
+
+**Negative control, run and recorded:** reverting the one line makes 3 of the 6 fail, naming the
+author's text as missing; the byte-identical-inventory test passes either way, which is correct and
+is why it cannot be the only test. Suites after the fix: app **976/0/2**, web **487/0/0**.
+
+**Not yet reflected on the public site.** `known-issues.md` gained an exception paragraph under
+issue 1 on 2026-09-01 describing this defect, because it is present in the released 2.0.16. **Remove
+that paragraph when the fix ships**, and say so in the release notes — the entry is correct today
+and becomes wrong the moment the next image is published.
+
 ---
 
 ## 2. Phases
@@ -99,11 +175,28 @@ which is the same asymmetry that produced this bug.
 **Test.** A db-free unit test over the instruction-building function with: all-read-only, all-CRUD,
 and a mixed config. Assert the read-only case contains no `insert`. **Negative control:** revert the
 production change and confirm the read-only assertion fails — the mixed case will pass either way,
-so it cannot be the only test.
+so it cannot be the only test. **Add a fourth case for §1.3:** author instructions plus a duality
+view, asserting the author's text survives. Whichever change lands first, this block ends up with
+one test covering both defects in it.
 
 **Also update** the `Schema.java:99` javadoc claim.
 
 ### Phase 2 — DATE inside a record
+
+> **SUPERSEDED 2026-09-01 by [`mcp-record-date-parsing-plan.md`](mcp-record-date-parsing-plan.md),
+> and half of it is already DONE.** Read that plan rather than this section.
+>
+> - **2b (the schema description) SHIPPED IN 2.0.12** — `recordFieldCrossingNote`. It took the
+>   sibling shape this section recommended, gaining a description beside the type rather than
+>   changing `recordFieldJsonType`'s return type, and it covered `byte[]` as this section advised.
+> - **2a (the parsing) is still open**, and is now measured rather than inferred: the record path
+>   also DROPS a zone offset, DROPS fractional seconds, and rolls `2003-13-45` into `2004-02-14`.
+>   The bare-date rejection is the only one of the four that is visible.
+> - **One claim below is WRONG and is left in place as the record.** It says `RECORD_MAPPER` has
+>   "no date handling" and that Jackson's default `yyyy-MM-dd'T'HH:mm:ss.SSSZ` therefore applies. A
+>   `.defaultDateFormat(...)` line was added on 2026-08-18, four days before this was written, so
+>   the accepted form is the CONFIGURED `yyyy-MM-dd'T'HH:mm:ss`. Reading the emitter at the revision
+>   in front of you is not the same as reading it at the revision you remember.
 
 Two independent halves; **fixing either alone still leaves the tool unusable**, which is the trap
 here.
