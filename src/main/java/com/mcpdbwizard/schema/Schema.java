@@ -96,9 +96,13 @@ public class Schema {
      * <p>{@code instructions} is a top-level field on the MCP server -- NOT a member of
      * {@code ServerCapabilities} -- returned in {@code InitializeResult}, and it is the first thing
      * a model reads, before any tool. The generator already writes an inventory of what was exposed
-     * ("Exposes row CRUD on table(s) ..."), which is always accurate and always impersonal. This is
-     * the part only a person knows: what the schema is for, how the objects relate, and what an
-     * agent should not attempt even though a tool exists for it.
+     * ("Exposes row CRUD on table(s) ..."), which is impersonal, and which names only the operations
+     * each table really exposes -- it is built from the per-table {@code TABLE_MCP_CRUD} flags, so a
+     * read-only table is described as read-only. (It was NOT: until 2.0.18 that clause was a
+     * hardcoded literal naming all four operations for every table, and this comment claimed it was
+     * "always accurate" while it was not.) This is the part only a person knows: what the schema is
+     * for, how the objects relate, and what an agent should not attempt even though a tool exists
+     * for it.
      *
      * <p><b>Prepended, never replacing.</b> The generated clauses still follow, so a config that
      * never sets this emits a byte-identical server.

@@ -26,7 +26,7 @@ the best part of it. Its **ranking** is what needs correcting.
 | # | Sweep's claim | Verdict | Anchor |
 |---|---|---|---|
 | 1 | `paramState` silently dropped — "severity: highest" | **NOT A DEFECT.** Fixture DDL never inserts the column | `app/sql/Demo/mcpdbwizard_demo_ddl.sql:437` |
-| — | Instructions advertise CRUD that is not exposed (filed as an aside) | **REAL DEFECT, under-ranked** | `SAAdminWrangler.java:5224` |
+| — | Instructions advertise CRUD that is not exposed (filed as an aside) | **FIXED 2026-09-02** — Phase 1, see below | `SAAdminWrangler.mcpTableClause` |
 | 2 | DATE in a record publishes no format and rejects the documented one | **REAL.** Records bypass the completed date-crossing fix | `SAAdminWrangler.java:5124`, `:6375` |
 | 3 | `ORA-17072` names the value, not the column | **REAL**, and the limit is findable | `StatementParameters2.java:1032` |
 | 4 | Index-by collection READ fails `ORA-06532` | **REAL, and not covered by any existing plan** | needs investigation |
@@ -157,20 +157,37 @@ and becomes wrong the moment the next image is published.
 
 Ordered by value over risk. Phases 1–3 are independent and can land separately.
 
-### Phase 1 — instructions must describe only what was emitted
+### Phase 1 — instructions must describe only what was emitted — **DONE 2026-09-02**
 
-**The fix.** Build the operation list per table from the flags already decoded on `TableMcpInfo`,
-instead of a hardcoded string. Tables in one config may differ, so the listing cannot be a single
-sentence with one parenthesis when the flags are not uniform.
+> **D1 was decided by David: (a), group tables by flag set.** Implemented as
+> `SAAdminWrangler.mcpTableClause`, keyed on `mcpTableOperations(TableMcpInfo)` — the operation
+> string doubles as the group key, so grouping is one pass and needs no comparator. Groups keep the
+> order their first table appeared in, so the same config yields the same sentence every run.
+>
+> **An all-CRUD config gets BYTE-IDENTICAL text to before**, asserted as a literal. That is the
+> common case and every config predating `TABLE_MCP_CRUD` is in it; a release must not rewrite the
+> instructions of a server whose exposure has not changed.
+>
+> A read-only config now reads `Exposes row operations on table(s) AIRCRAFT, AIRPORTS (get_by_pk),
+> rows crossing as JSON objects keyed by column name.` A mixed one joins the groups with `and`.
+>
+> **The sibling site moved with it, as this plan required.** `surfaceSummary` — the server
+> DESCRIPTION — says "row CRUD on table(s)" only when `mcpAllTablesFullCrud` is true, and "row
+> access to table(s)" otherwise. It stays a summary and does not enumerate operations.
+>
+> **`Schema.java`'s javadoc claim was corrected too.** It said the generated inventory "is always
+> accurate and always impersonal" while it was not accurate; it now says what the clause is built
+> from, and records that it was wrong until this fix.
+>
+> Tests: 7 added to `McpServerInstructionsTest` (13 total). Negative control run — reverting
+> `mcpTableClause` to the old all-CRUD literal fails 4 of them. Suites app 994/0/2, web 487/0/0.
+>
+> **NOT yet on the public site.** Known issue 1 describes released behaviour and comes out when this
+> ships; until then the page is right and the code is ahead of it.
 
-**Decision wanted (D1):** what to print when tables disagree — e.g. `AIRCRAFT` read-only and
-`BOOKINGS` full CRUD. Options: (a) group tables by flag set, one clause each; (b) one clause naming
-per-table operations inline; (c) list the union and let `tools/list` be the authority. **(a) is
-recommended** — it stays one short sentence in the common case where every table matches, which is
-what the existing text optimises for.
-
-**Both sites move together** (`:5019` and `:5224`) or the description and the instructions disagree,
-which is the same asymmetry that produced this bug.
+**Both sites move together** or the description and the instructions disagree, which is the same
+asymmetry that produced this bug. (Done: `surfaceSummary` and `mcpTableClause` both consult the
+flags now.)
 
 **Test.** A db-free unit test over the instruction-building function with: all-read-only, all-CRUD,
 and a mixed config. Assert the read-only case contains no `insert`. **Negative control:** revert the

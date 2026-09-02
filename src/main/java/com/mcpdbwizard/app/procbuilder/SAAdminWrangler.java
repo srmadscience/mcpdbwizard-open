@@ -4987,12 +4987,18 @@ public class SAAdminWrangler extends SADbWrangler {
             functionNameListing = functionNameListing + ((SingleNamespaceObject) mcpFunctionList.get(seq)).oracleName;
         }
 
+        // mcpTableList is a raw ArrayList (this file predates generics). One typed view, built
+        // where the names are already being walked, so the two clauses that describe these tables
+        // cannot end up reading different lists.
+        java.util.List<TableMcpInfo> mcpTableInfoList = new java.util.ArrayList<TableMcpInfo>();
         String tableNameListing = "";
         for (int seq = 0; seq < mcpTableList.size(); seq++) {
             if (seq > 0) {
                 tableNameListing = tableNameListing + ", ";
             }
-            tableNameListing = tableNameListing + ((TableMcpInfo) mcpTableList.get(seq)).tableOracleName;
+            TableMcpInfo theTableInfo = (TableMcpInfo) mcpTableList.get(seq);
+            mcpTableInfoList.add(theTableInfo);
+            tableNameListing = tableNameListing + theTableInfo.tableOracleName;
         }
 
         String sqlNameListing = "";
@@ -5017,8 +5023,14 @@ public class SAAdminWrangler extends SADbWrangler {
             surfaceSummary = "document CRUD on duality view(s) " + viewNameListing;
         }
         if (haveTables) {
+            // "CRUD" only where every table really is full CRUD. This is the server DESCRIPTION,
+            // and it has to agree with the instructions clause built below or the two halves of
+            // the same fact contradict each other -- the asymmetry that produced the defect in the
+            // first place. It stays a summary, so it does not enumerate operations.
             surfaceSummary = surfaceSummary + (surfaceSummary.length() > 0 ? " and " : "")
-                    + "row CRUD on table(s) " + tableNameListing;
+                    + (mcpAllTablesFullCrud(mcpTableInfoList) ? "row CRUD on table(s) "
+                                                              : "row access to table(s) ")
+                    + tableNameListing;
         }
         if (haveFunctions) {
             surfaceSummary = surfaceSummary + (surfaceSummary.length() > 0 ? " and " : "")
@@ -5228,7 +5240,7 @@ public class SAAdminWrangler extends SADbWrangler {
 
         String instructionsText = mcpServerInstructions(escapedAuthorInstructions,
                 mcpViewList.size() > 0, viewNameListing,
-                haveTables, tableNameListing,
+                mcpTableClause(mcpTableInfoList),
                 haveFunctions, functionNameListing,
                 haveSql, sqlNameListing,
                 haveSequences, sequenceNameListing);
@@ -7391,6 +7403,142 @@ public class SAAdminWrangler extends SADbWrangler {
     }
 
     /**
+     * The operations one table actually exposes, in the order a reader expects them, or an empty
+     * string when it exposes none.
+     *
+     * <p>This is the key the tables are GROUPED by, so it doubles as the group's label — two
+     * tables belong together exactly when this string matches, which is what makes the grouping
+     * one pass and no comparator.
+     *
+     * @param theTable the table's decoded CRUD flags
+     * @return e.g. {@code "get_by_pk / insert / update / delete"} or {@code "get_by_pk"}
+     */
+    static String mcpTableOperations(TableMcpInfo theTable) {
+        StringBuilder theOperations = new StringBuilder();
+
+        if (theTable.readable) {
+            theOperations.append("get_by_pk");
+        }
+        if (theTable.insertable) {
+            theOperations.append(theOperations.length() > 0 ? " / " : "").append("insert");
+        }
+        if (theTable.updatable) {
+            theOperations.append(theOperations.length() > 0 ? " / " : "").append("update");
+        }
+        if (theTable.deletable) {
+            theOperations.append(theOperations.length() > 0 ? " / " : "").append("delete");
+        }
+
+        return theOperations.toString();
+    }
+
+    /** Every operation, which is what an unconfigured table gets and what the old text assumed. */
+    static final String MCP_FULL_CRUD = "get_by_pk / insert / update / delete";
+
+    /**
+     * TRUE when every exposed table exposes all four operations — the case where calling the
+     * surface "row CRUD" is honest.
+     *
+     * @param theTables the exposed tables
+     * @return whether "CRUD" describes all of them
+     */
+    static boolean mcpAllTablesFullCrud(java.util.List<TableMcpInfo> theTables) {
+        if (theTables == null || theTables.isEmpty()) {
+            return true;
+        }
+
+        for (int seq = 0; seq < theTables.size(); seq++) {
+            if (!MCP_FULL_CRUD.equals(mcpTableOperations(theTables.get(seq)))) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * The instructions clause describing what can be done to each table, with tables GROUPED by
+     * the operations they share.
+     *
+     * <p><b>The defect this replaces.</b> The clause was one hardcoded literal, emitted whenever the
+     * config had any table at all: it always said {@code (get_by_pk / insert / update / delete)},
+     * however the per-table {@code TABLE_MCP_CRUD} flags were set. The tools were always right — an
+     * operation whose flag is false has no tool emitted at all — so this never let anything through.
+     * It misdescribed the config to the one reader who acts on the description: a model reads
+     * {@code instructions} before any tool list, so it would call {@code insert} on a read-only
+     * table and get {@code unknown tool} back. And because read-only-ness here IS the authorization
+     * decision, saying otherwise misstated the config's security posture.
+     *
+     * <p><b>An all-CRUD config gets BYTE-IDENTICAL text to before</b>, which is deliberate: that is
+     * the common case, every config written before the flags existed is in it, and a release should
+     * not rewrite the instructions of servers whose exposure has not changed.
+     *
+     * <p><b>Grouping rather than one clause per table</b> (the decision recorded as D1 in
+     * {@code app/docs/mcp-sweep-260822-plan.md}): a config with twelve tables all read-only should
+     * read as one short clause naming twelve tables, not twelve clauses. Groups appear in the order
+     * their first table does, so the text is stable across runs.
+     *
+     * @param theTables the exposed tables, in emission order; a fully suppressed table never
+     *                  reaches this list, so every entry has at least one operation
+     * @return the clause, ending in a space, or an empty string when there are no tables
+     */
+    static String mcpTableClause(java.util.List<TableMcpInfo> theTables) {
+        if (theTables == null || theTables.isEmpty()) {
+            return "";
+        }
+
+        // LinkedHashMap so groups keep first-appearance order: same config, same sentence.
+        java.util.LinkedHashMap<String, StringBuilder> theGroups =
+                new java.util.LinkedHashMap<String, StringBuilder>();
+
+        for (int seq = 0; seq < theTables.size(); seq++) {
+            TableMcpInfo theTable = theTables.get(seq);
+            String theOperations = mcpTableOperations(theTable);
+
+            if (theOperations.length() == 0) {
+                // Cannot arrive here today -- a fully suppressed table is dropped before the list
+                // is built -- but naming a table while listing no operation for it would be the
+                // same class of wrongness this method exists to remove.
+                continue;
+            }
+
+            StringBuilder theNames = theGroups.get(theOperations);
+            if (theNames == null) {
+                theNames = new StringBuilder();
+                theGroups.put(theOperations, theNames);
+            }
+            theNames.append(theNames.length() > 0 ? ", " : "").append(theTable.tableOracleName);
+        }
+
+        if (theGroups.isEmpty()) {
+            return "";
+        }
+
+        String theTail = ", rows crossing as JSON objects keyed by column name. ";
+
+        // The unchanged case, kept word for word.
+        if (theGroups.size() == 1 && theGroups.containsKey(MCP_FULL_CRUD)) {
+            return "Exposes row CRUD on table(s) " + theGroups.get(MCP_FULL_CRUD)
+                    + " (" + MCP_FULL_CRUD + ")" + theTail;
+        }
+
+        StringBuilder theClause = new StringBuilder("Exposes row operations on ");
+        int theIndex = 0;
+        int theCount = theGroups.size();
+
+        for (java.util.Map.Entry<String, StringBuilder> theGroup : theGroups.entrySet()) {
+            if (theIndex > 0) {
+                theClause.append(theIndex == theCount - 1 ? " and " : ", ");
+            }
+            theClause.append("table(s) ").append(theGroup.getValue())
+                    .append(" (").append(theGroup.getKey()).append(")");
+            theIndex++;
+        }
+
+        return theClause + theTail;
+    }
+
+    /**
      * The generated server's {@code instructions} string: the author's own words, then the
      * inventory of what this config exposes.
      *
@@ -7414,8 +7562,8 @@ public class SAAdminWrangler extends SADbWrangler {
      *                                     {@link #javaStringLiteral}, or null when unset
      * @param theHaveViews                 whether any duality view is exposed
      * @param theViewListing               comma-separated view names
-     * @param theHaveTables                whether any table is exposed
-     * @param theTableListing              comma-separated table names
+     * @param theTableClause               the whole table clause from {@link #mcpTableClause},
+     *                                     empty when no table is exposed
      * @param theHaveFunctions             whether any PL/SQL routine is exposed
      * @param theFunctionListing           comma-separated routine names
      * @param theHaveSql                   whether any user SQL statement is exposed
@@ -7426,7 +7574,7 @@ public class SAAdminWrangler extends SADbWrangler {
      */
     static String mcpServerInstructions(String theEscapedAuthorInstructions,
             boolean theHaveViews, String theViewListing,
-            boolean theHaveTables, String theTableListing,
+            String theTableClause,
             boolean theHaveFunctions, String theFunctionListing,
             boolean theHaveSql, String theSqlListing,
             boolean theHaveSequences, String theSequenceListing) {
@@ -7444,9 +7592,10 @@ public class SAAdminWrangler extends SADbWrangler {
                     + "document changed since it was read (re-read and retry). Omitting _metadata "
                     + "forces an unconditional overwrite. ";
         }
-        if (theHaveTables) {
-            theInstructions = theInstructions + "Exposes row CRUD on table(s) " + theTableListing
-                    + " (get_by_pk / insert / update / delete), rows crossing as JSON objects keyed by column name. ";
+        // Built by mcpTableClause, because what a table exposes is PER TABLE -- this used to be
+        // one hardcoded literal that named four operations whatever the flags said.
+        if (theTableClause != null && theTableClause.length() > 0) {
+            theInstructions = theInstructions + theTableClause;
         }
         if (theHaveFunctions) {
             theInstructions = theInstructions + "Also exposes PL/SQL routine(s) " + theFunctionListing

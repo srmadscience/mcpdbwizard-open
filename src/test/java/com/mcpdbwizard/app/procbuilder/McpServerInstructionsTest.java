@@ -1,8 +1,14 @@
 package com.mcpdbwizard.app.procbuilder;
 
+import com.mcpdbwizard.app.common.TableMcpInfo;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -39,10 +45,22 @@ class McpServerInstructionsTest {
             boolean theHaveFunctions, boolean theHaveSql, boolean theHaveSequences) {
         return SAAdminWrangler.mcpServerInstructions(theAuthor,
                 theHaveViews, "OB_ORDERS_DV",
-                theHaveTables, "BOOKINGS",
+                theHaveTables ? SAAdminWrangler.mcpTableClause(Arrays.asList(table("BOOKINGS", "CRUD"))) : "",
                 theHaveFunctions, "OB_PKG.GREET",
                 theHaveSql, "recent_orders.sql",
                 theHaveSequences, "OB_SEQ");
+    }
+
+    /** A table with the operations named by letter, as TABLE_MCP_CRUD spells them. */
+    private static TableMcpInfo table(String theName, String theFlags) {
+        TableMcpInfo theTable = new TableMcpInfo();
+        theTable.tableOracleName = theName;
+        theTable.applyCrudFlags(theFlags);
+        return theTable;
+    }
+
+    private static String clauseFor(TableMcpInfo... theTables) {
+        return SAAdminWrangler.mcpTableClause(new ArrayList<TableMcpInfo>(Arrays.asList(theTables)));
     }
 
     // ---- the regression ----------------------------------------------------
@@ -117,5 +135,84 @@ class McpServerInstructionsTest {
         String theInstructions = instructionsWith(null, false, false, false, true, false);
 
         assertTrue(theInstructions.contains("{\\\"executed\\\":true}"), theInstructions);
+    }
+
+    // ---- the table clause: what each table actually exposes ----------------
+
+    @Test
+    void anAllCrudConfigReadsEXACTLYAsItAlwaysHas() {
+        // The common case, and every config written before TABLE_MCP_CRUD existed is in it. A
+        // release must not rewrite the instructions of a server whose exposure has not changed,
+        // so this is asserted as a literal rather than by round-tripping the builder.
+        assertEquals("Exposes row CRUD on table(s) BOOKINGS, CUSTOMERS"
+                        + " (get_by_pk / insert / update / delete),"
+                        + " rows crossing as JSON objects keyed by column name. ",
+                clauseFor(table("BOOKINGS", "CRUD"), table("CUSTOMERS", "CRUD")));
+    }
+
+    @Test
+    void aReadOnlyConfigNoLongerPromisesWrites() {
+        // The defect, in one assertion. This used to name insert, update and delete for tables
+        // that have no such tool -- and read-only-ness here IS the authorization decision, so it
+        // misdescribed the config's security posture to the only reader that acts on it.
+        String theClause = clauseFor(table("AIRCRAFT", "R"), table("AIRPORTS", "R"));
+
+        assertTrue(theClause.contains("(get_by_pk)"), theClause);
+        assertFalse(theClause.contains("insert"), theClause);
+        assertFalse(theClause.contains("update"), theClause);
+        assertFalse(theClause.contains("delete"), theClause);
+        assertTrue(theClause.contains("AIRCRAFT, AIRPORTS"), theClause);
+    }
+
+    @Test
+    void tablesSharingOperationsAreGROUPED() {
+        // D1, decided: group by flag set. Twelve read-only tables should read as one clause
+        // naming twelve tables, not as twelve clauses.
+        String theClause = clauseFor(table("A", "R"), table("B", "CRUD"), table("C", "R"));
+
+        // A and C share a group even though B sits between them.
+        assertTrue(theClause.contains("table(s) A, C (get_by_pk)"), theClause);
+        assertTrue(theClause.contains("table(s) B (get_by_pk / insert / update / delete)"), theClause);
+        // Two groups, so exactly one "and" joining them.
+        assertEquals(2, theClause.split("table\\(s\\)", -1).length - 1, theClause);
+        assertTrue(theClause.contains(") and table(s) "), theClause);
+    }
+
+    @Test
+    void groupsKeepTheOrderTheirFirstTableAppearedIn() {
+        // Stability matters: the same config must produce the same sentence on every run, or a
+        // regenerated server looks changed when nothing about it is.
+        String theClause = clauseFor(table("Z", "R"), table("A", "CRUD"));
+
+        assertTrue(theClause.indexOf("table(s) Z") < theClause.indexOf("table(s) A"), theClause);
+    }
+
+    @Test
+    void everyPartialCombinationNamesOnlyWhatItExposes() {
+        assertTrue(clauseFor(table("T", "RU")).contains("(get_by_pk / update)"));
+        assertTrue(clauseFor(table("T", "CRUD")).contains("(get_by_pk / insert / update / delete)"));
+        assertTrue(clauseFor(table("T", "C")).contains("(insert)"));
+        assertTrue(clauseFor(table("T", "D")).contains("(delete)"));
+        // Order is canonical, not the order the letters were written in.
+        assertTrue(clauseFor(table("T", "DUCR")).contains("(get_by_pk / insert / update / delete)"));
+    }
+
+    @Test
+    void noTablesMeansNoClauseAtAll() {
+        assertEquals("", SAAdminWrangler.mcpTableClause(new ArrayList<TableMcpInfo>()));
+        assertEquals("", SAAdminWrangler.mcpTableClause(null));
+    }
+
+    @Test
+    void theSurfaceSummaryOnlySaysCRUDWhenItIsTRUE() {
+        // The server DESCRIPTION and the instructions are two halves of one fact. Them disagreeing
+        // is the asymmetry that produced this defect, so the predicate behind the description is
+        // pinned here beside the clause it has to agree with.
+        List<TableMcpInfo> theAllCrud = Arrays.asList(table("A", "CRUD"), table("B", "CRUD"));
+        List<TableMcpInfo> theMixed = Arrays.asList(table("A", "CRUD"), table("B", "R"));
+
+        assertTrue(SAAdminWrangler.mcpAllTablesFullCrud(theAllCrud));
+        assertFalse(SAAdminWrangler.mcpAllTablesFullCrud(theMixed));
+        assertFalse(SAAdminWrangler.mcpAllTablesFullCrud(Arrays.asList(table("A", "R"))));
     }
 }
