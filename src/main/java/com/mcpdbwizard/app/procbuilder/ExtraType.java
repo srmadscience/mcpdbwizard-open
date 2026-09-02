@@ -18,6 +18,20 @@ public class ExtraType {
     public final static String PARAM_TARGET_PARAM_NAME_ATYPE = "PARAM_TARGET_PARAM_NAME_ATYPE";
     public final static String PARAM_TARGET_PARAM_NAME_RTYPE = "PARAM_TARGET_PARAM_NAME_RTYPE";
     public final static String PARAM_TARGET_PARAM_NAME_REALTYPE = "PARAM_TARGET_PARAM_NAME_REALTYPE";
+    /**
+     * The subscript the INBOUND copy writes at. An index-by table accepts any subscript, so that arm
+     * substitutes the carried position; a nested table or VARRAY has been EXTENDed to COUNT and must
+     * stay dense, so that arm substitutes the loop variable. One template, two answers.
+     */
+    public final static String PARAM_TARGET_TARGET_INDEX = "PARAM_TARGET_TARGET_INDEX";
+    /** The source collection's own key, carried OUT as {@link #POSITION_ATTRIBUTE}. */
+    public final static String PARAM_TARGET_SOURCE_INDEX = "PARAM_TARGET_SOURCE_INDEX";
+    /**
+     * The trailing attribute that carries a collection element's PL/SQL subscript across the
+     * boundary. Without it a round trip silently renumbers: the shadow SQL type is keyed 1..COUNT,
+     * so an index-by keyed 0.., sparse or negative comes back dense and goes back in dense.
+     */
+    public final static String POSITION_ATTRIBUTE = "MCPDBWIZARD_POS";
     int arrayId = 0;
     String name = "";
     ArrayList createStatement = null;
@@ -100,7 +114,12 @@ public class ExtraType {
         }
 
 
-        unAssignStatement.add(ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + "(i) := " + ExtraType.PARAM_TARGET_PARAM_NAME_RTYPE);
+        // The DESTINATION subscript is the shadow array's own LAST, never the source key. An
+        // index-by table is keyed by arbitrary BINARY_INTEGERs -- base 0, negative, or sparse --
+        // while a nested table is keyed 1..COUNT, and indexing the second with the first is
+        // ORA-06532 (base 0 / negative) or ORA-06533 (sparse). The emitters that consume this
+        // template EXTEND one element per copied row, so LAST is the row just made.
+        unAssignStatement.add(ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + "(" + ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + ".LAST) := " + ExtraType.PARAM_TARGET_PARAM_NAME_RTYPE);
 
         weirdAssignStatement.add(ExtraType.PARAM_TARGET_PARAM_NAME + "(i) := " + ExtraType.PARAM_TARGET_PARAM_NAME_RTYPE);
 
@@ -142,7 +161,7 @@ public class ExtraType {
 
                     weirdAssign = weirdAssign + ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + "(i).COL_" + i;
                     assign = assign + ExtraType.PARAM_TARGET_PARAM_NAME
-                            + "(i)." + theRowSet.getString("ARGUMENT_NAME").toUpperCase()
+                            + "(" + ExtraType.PARAM_TARGET_TARGET_INDEX + ")." + theRowSet.getString("ARGUMENT_NAME").toUpperCase()
                             + spaces.substring(0, (maxLength - theRowSet.getString("ARGUMENT_NAME").length()))
                             + " := "
                             + ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + "(i).COL_" + i
@@ -154,7 +173,7 @@ public class ExtraType {
                             + " " + theRowSet.getString("DATA_TYPE");
 
                     weirdAssign = weirdAssign + ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME + "(i)." + theRowSet.getString("ARGUMENT_NAME").toUpperCase();
-                    assign = assign + ExtraType.PARAM_TARGET_PARAM_NAME + "(i)." + theRowSet.getString("ARGUMENT_NAME").toUpperCase()
+                    assign = assign + ExtraType.PARAM_TARGET_PARAM_NAME + "(" + ExtraType.PARAM_TARGET_TARGET_INDEX + ")." + theRowSet.getString("ARGUMENT_NAME").toUpperCase()
                             + spaces.substring(0, (maxLength - theRowSet.getString("ARGUMENT_NAME").length()))
                             + " := "
                             + ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME
@@ -274,11 +293,49 @@ public class ExtraType {
             createStatement.set(0, "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_T AS OBJECT");
             dropTypeStatement = "DROP TYPE " + name.toUpperCase() + "_T;";
             createArrayStatement = "CREATE OR REPLACE TYPE " + name.toUpperCase() + "_A  AS TABLE OF " + name.toUpperCase() + "_T;";
+
+            // Only a RECORD element gets the position attribute, which is why this sits here rather
+            // than in the field loop: the arm above builds a TABLE OF NUMBER (or VARCHAR2, ...) with
+            // no attributes at all, and an object attribute on it would not compile.
+            //
+            // It goes LAST so every existing COL_n keeps its index, and the shape-derived type NAME
+            // is deliberately left alone: every record collection gains the attribute uniformly, so
+            // no two shapes can collide, and a name fork would force a second element class per
+            // record shape (one class names one type).
+            appendPositionAttribute();
         }
 
         dropArrayStatement = "DROP TYPE " + name.toUpperCase() + "_A;";
 
 
+    }
+
+    /**
+     * Appends {@link #POSITION_ATTRIBUTE} to the object type and to the constructor call that fills
+     * it. Both ends move together on purpose: the CREATE and the constructor must agree on arity, and
+     * a mismatch is not a compile error -- it is an ORA-06550 at bind time, in generated code, on a
+     * path the developer did not touch.
+     */
+    private void appendPositionAttribute() {
+        int lastLine = createStatement.size() - 1;
+        String ddl = (String) createStatement.get(lastLine);
+        if (!ddl.endsWith(");")) {
+            // No attribute list to extend -- the "record with no fields" case, which is already
+            // failed discovery and emits an INVALID type. Adding to it would only hide that.
+            return;
+        }
+        // A SEPARATE list entry, never a newline inside this one. createExtraTypeObjects() emits
+        // each of these lines as a Java string literal, and an embedded newline makes the generated
+        // ServiceImpl fail to compile with "unclosed string literal" -- far from the cause.
+        createStatement.set(lastLine, ddl.substring(0, ddl.length() - 2));
+        createStatement.add(" ," + POSITION_ATTRIBUTE + " NUMBER);");
+
+        int lastUnassign = unAssignStatement.size() - 1;
+        String ctor = (String) unAssignStatement.get(lastUnassign);
+        if (ctor.endsWith(");")) {
+            unAssignStatement.set(lastUnassign,
+                    ctor.substring(0, ctor.length() - 2) + "," + PARAM_TARGET_SOURCE_INDEX + ");");
+        }
     }
 
     String getName() {

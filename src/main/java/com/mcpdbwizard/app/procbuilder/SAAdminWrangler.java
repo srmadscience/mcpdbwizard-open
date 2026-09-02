@@ -22521,6 +22521,16 @@ public class SAAdminWrangler extends SADbWrangler {
                             theJavaCode.unIndent();
                             theJavaCode.print(" ");
 
+                            // The position slot goes on records that back a GENERATED shadow type and
+                            // on no others. generatedGenericTypeName is exactly that test -- it is the
+                            // same condition that made recordName an OSOFT... name above rather than the
+                            // record's own Oracle name. A record used as a plain parameter is bound
+                            // field by field, has no STRUCT, and must not gain the slot.
+                            theExtraObjects[seq].theEngine.emitPositionAttribute =
+                                    (theExtraObjects[seq].generatedGenericTypeName != null);
+                            theExtraObjects[seq].theEngine.positionTypeName =
+                                    theExtraObjects[seq].generatedGenericTypeName;
+
                             theExtraObjects[seq].theEngine.addObjectArraySet(theJavaCode, comments);
                             theJavaCode.print(" ");
 

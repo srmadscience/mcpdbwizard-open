@@ -103,6 +103,28 @@ public class CallableStatementParameterEngine {
     boolean makeOwnTestCases = false;
     boolean arraysSupported = true;
     boolean needsPlsqlIndexByArray = false;
+    /**
+     * True when this engine is emitting a record class that backs a generated shadow SQL type, which
+     * carries a trailing {@link ExtraType#POSITION_ATTRIBUTE}. The Java class must then have one more
+     * slot than the record has fields, at both ends: {@code getCurrentValues()} feeds the STRUCT
+     * constructor and {@code setNewValues()} reads a STRUCT apart, so a disagreement is not a compile
+     * error but an ORA-06550 at bind time. Records that are plain parameters have no shadow type and
+     * must NOT gain the slot.
+     */
+    boolean emitPositionAttribute = false;
+    /** Java field backing {@link ExtraType#POSITION_ATTRIBUTE}. */
+    static final String POSITION_FIELD = "mcpdbwizardPos";
+    /** Local the emitted code uses to decide, per call, which type it is binding. */
+    static final String POSITION_FLAG = "mcpdbwizardWithPos";
+    /**
+     * The generated shadow type this record class binds when nothing has repointed it. Needed
+     * because ONE element class can bind TWO different Oracle types: a collection of a real
+     * user-declared type overwrites {@code recordName} with its own child type at run time
+     * ({@code newValues[i].recordName = childRecordName}), so the same class must produce the
+     * shadow type's attribute count in one call and the customer's own in the next. A fixed array
+     * length satisfies one and fails the other with ORA-17049, which names neither.
+     */
+    String positionTypeName = null;
     Properties numberDataTypes = null;
     ReadOnlyRowSet theRowSet = null;
     LogInterface theLog = null;
@@ -2599,7 +2621,17 @@ public class CallableStatementParameterEngine {
         if (comments) {
             theJavaChunk.print("// Create temp array that has right number of elements");
         }
-        theJavaChunk.print("Object[] tempObjectArray = new Object[" + theRowSet.size() + "];");
+        if (emitPositionAttribute) {
+            if (comments) {
+                theJavaChunk.print("// recordName can be repointed at a real user type by a collection that");
+                theJavaChunk.print("// owns one, so the attribute count is decided per call, not per class.");
+            }
+            theJavaChunk.print("boolean " + POSITION_FLAG + " = \"" + positionTypeName + "\".equals(recordName);");
+            theJavaChunk.print("Object[] tempObjectArray = new Object[" + POSITION_FLAG + " ? "
+                    + (theRowSet.size() + 1) + " : " + theRowSet.size() + "];");
+        } else {
+            theJavaChunk.print("Object[] tempObjectArray = new Object[" + theRowSet.size() + "];");
+        }
         theJavaChunk.print(" ");
 
 
@@ -2675,6 +2707,14 @@ public class CallableStatementParameterEngine {
             }
         }
 
+        if (emitPositionAttribute) {
+            if (comments) {
+                theJavaChunk.print("// The PL/SQL subscript this element came from, or null when the");
+                theJavaChunk.print("// caller built this object rather than reading one back.");
+            }
+            theJavaChunk.print("if (" + POSITION_FLAG + ") { tempObjectArray[" + theRowSet.size()
+                    + "] = " + POSITION_FIELD + "; }");
+        }
         theJavaChunk.print("return(tempObjectArray);");
         theJavaChunk.print("}");
         theJavaChunk.unIndent();
@@ -2716,6 +2756,36 @@ public class CallableStatementParameterEngine {
             theJavaChunk.print("*/");
         }
 
+        if (emitPositionAttribute) {
+            if (comments) {
+                theJavaChunk.print("/**");
+                theJavaChunk.print("* The PL/SQL subscript this element occupied in its collection.");
+                theJavaChunk.print("* An index-by table is keyed by arbitrary BINARY_INTEGERs while the shadow SQL");
+                theJavaChunk.print("* type is keyed 1..COUNT, so without this a round trip silently renumbers a");
+                theJavaChunk.print("* base-0, sparse or negative collection into a dense one.");
+                theJavaChunk.print("* Null when this object was built rather than read back; the inbound bind then");
+                theJavaChunk.print("* falls back to the dense position.");
+                theJavaChunk.print("*/");
+            }
+            theJavaChunk.print("public java.math.BigDecimal " + POSITION_FIELD + " = null;");
+            theJavaChunk.print(" ");
+            if (comments) {
+                theJavaChunk.print("/**");
+                theJavaChunk.print("* @return the PL/SQL subscript this element occupied, or null.");
+                theJavaChunk.print("*/");
+            }
+            theJavaChunk.print("public java.math.BigDecimal getPlsqlPosition() { return(" + POSITION_FIELD + "); }");
+            theJavaChunk.print(" ");
+            if (comments) {
+                theJavaChunk.print("/**");
+                theJavaChunk.print("* @param thePosition the PL/SQL subscript to place this element at on the way in.");
+                theJavaChunk.print("*/");
+            }
+            theJavaChunk.print("public void setPlsqlPosition(java.math.BigDecimal thePosition) { this."
+                    + POSITION_FIELD + " = thePosition; }");
+            theJavaChunk.print(" ");
+        }
+
         theJavaChunk.print("public void "
                 + "setNewValues" + "(" + "Object[]"
                 + " " + "newValues" + ") throws CSException ");
@@ -2725,7 +2795,12 @@ public class CallableStatementParameterEngine {
         if (comments) {
             theJavaChunk.print("// Check that array has right number of elements");
         }
-        theJavaChunk.print("if (newValues == null || newValues.length != " + theRowSet.size() + ")");
+        if (emitPositionAttribute) {
+            theJavaChunk.print("if (newValues == null || (newValues.length != " + theRowSet.size()
+                    + " && newValues.length != " + (theRowSet.size() + 1) + "))");
+        } else {
+            theJavaChunk.print("if (newValues == null || newValues.length != " + theRowSet.size() + ")");
+        }
 
 
         if (theRowSet.size() == 0) {
@@ -2744,6 +2819,21 @@ public class CallableStatementParameterEngine {
             theJavaChunk.print("// Check that array elements have correct data types");
             theJavaChunk.print(" ");
         }
+        if (emitPositionAttribute) {
+            if (comments) {
+                theJavaChunk.print("// Keep the PL/SQL subscript this element was read at, so sending the");
+                theJavaChunk.print("// object back puts it at the same key rather than renumbering it.");
+            }
+            theJavaChunk.print("if (newValues.length == " + (theRowSet.size() + 1) + ")");
+            theJavaChunk.indent();
+            theJavaChunk.print("{");
+            theJavaChunk.print("this." + POSITION_FIELD + " = (newValues[" + theRowSet.size() + "] == null) ? null"
+                    + " : new java.math.BigDecimal(newValues[" + theRowSet.size() + "].toString());");
+            theJavaChunk.print("}");
+            theJavaChunk.unIndent();
+            theJavaChunk.print(" ");
+        }
+
         String charDataType = "byte[]";
         if (useCharForCLOB) charDataType = "char[]";
 
@@ -7312,6 +7402,13 @@ public class CallableStatementParameterEngine {
 
                                 for (int z = 0; z < theRecords[extraObjectId[i]].plsqlPackAssign.length; z++) {
                                     String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackAssign[z], ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME, n.createName(argName + "_T"));
+                                    // The index-by is keyed by the position the element carried out,
+                                    // so a round trip preserves base-0, sparse and negative keys.
+                                    // NVL is load-bearing: a caller who BUILDS an array rather than
+                                    // round-tripping one leaves the attribute null, and t(NULL) is
+                                    // ORA-06502 -- the dense subscript is the right answer there.
+                                    tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_TARGET_INDEX,
+                                            "NVL(" + n.createName(argName + "_T") + "(i)." + ExtraType.POSITION_ATTRIBUTE + ", i)");
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME, argName);
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME_ATYPE, theRecords[extraObjectId[i]].generatedGenericTypeName);
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME_REALTYPE, JavaUtils.StripLeadingUsername(theRecords[extraObjectId[i]].oracleName, loginName));
@@ -7413,6 +7510,9 @@ public class CallableStatementParameterEngine {
 
                                 for (int z = 0; z < theRecords[extraObjectId[i]].plsqlPackAssign.length; z++) {
                                     String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackAssign[z], ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME, n.createName(argName + "_T"));
+                                    // A nested table / VARRAY target has been EXTENDed to COUNT and
+                                    // must stay dense -- a carried position would be outside it.
+                                    tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_TARGET_INDEX, "i");
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME, argName);
                                     //String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackAssign[z], ExtraType.PARAM_TARGET_PARAM_NAME ,argName );
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME_ATYPE, theRecords[extraObjectId[i]].generatedGenericTypeName);
@@ -7544,9 +7644,14 @@ public class CallableStatementParameterEngine {
                             if (theRowSet.getString("IN_OUT").equals("IN/OUT")) {
                                 plsqlText.add(n.createName(argName + "_T") + ".DELETE;");
                             }
+                            // Same shape, same fix as the index-by arm below: EXTEND per row and
+                            // assign at LAST. A nested table is sparse after DELETE(n), so FIRST..LAST
+                            // spans holes that COUNT does not -- hence the EXISTS guard, which this
+                            // arm never had, as well as the per-row EXTEND.
                             plsqlText.add("IF " + argName + ".COUNT > 0 THEN");
-                            plsqlText.add("  " + n.createName(argName + "_T") + ".EXTEND(" + argName + ".COUNT);");
                             plsqlText.add("  FOR i IN " + argName + ".FIRST.." + argName + ".LAST LOOP");
+                            plsqlText.add("   IF " + argName + ".EXISTS(i) THEN");
+                            plsqlText.add("    " + n.createName(argName + "_T") + ".EXTEND;");
                             if (theRecords[extraObjectId[i]].plsqlPackUnassign != null) {
                                 for (int z = 0; z < theRecords[extraObjectId[i]].plsqlPackUnassign.length; z++) {
                                     //String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackUnassign[z], ExtraType.PARAM_TARGET_PARAM_NAME ,argName );
@@ -7557,6 +7662,8 @@ public class CallableStatementParameterEngine {
                                     //String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackAssign[z], ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME ,n.createName(argName + "_T") );
 
                                     String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackUnassign[z], ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME, n.createName(argName + "_T"));
+                                    // The source collection's own key, carried out as MCPDBWIZARD_POS.
+                                    tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_SOURCE_INDEX, "i");
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME, argName);
 
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME, argName);
@@ -7566,8 +7673,9 @@ public class CallableStatementParameterEngine {
                                     plsqlText.add("  " + tempString);
                                 }
                             } else {
-                                plsqlText.add(" " + n.createName(argName + "_T") + "(i) := " + argName + "(i);");
+                                plsqlText.add("     " + n.createName(argName + "_T") + "(" + n.createName(argName + "_T") + ".LAST) := " + argName + "(i);");
                             }
+                            plsqlText.add("   END IF;");
                             plsqlText.add("  END LOOP;");
                             plsqlText.add("END IF;");
                         }
@@ -7583,14 +7691,20 @@ public class CallableStatementParameterEngine {
                             if (theRowSet.getString("IN_OUT").equals("IN/OUT")) {
                                 plsqlText.add(n.createName(argName + "_T") + ".DELETE;");
                             }
+                            // EXTEND one element per copied row rather than EXTEND(COUNT) up front,
+                            // so the shadow array is filled 1..n whatever the index-by's own keys are.
+                            // It used to index the shadow array with the SOURCE key, which raises
+                            // ORA-06532 for a base-0 or negative key and ORA-06533 for a sparse one.
                             plsqlText.add("IF " + argName + ".COUNT > 0 THEN");
-                            plsqlText.add("  " + n.createName(argName + "_T") + ".EXTEND(" + argName + ".COUNT);");
                             plsqlText.add("  FOR i IN " + argName + ".FIRST.." + argName + ".LAST LOOP");
                             plsqlText.add("   IF " + argName + ".EXISTS(i) THEN");
+                            plsqlText.add("    " + n.createName(argName + "_T") + ".EXTEND;");
                             if (theRecords[extraObjectId[i]].plsqlPackUnassign != null) {
                                 for (int z = 0; z < theRecords[extraObjectId[i]].plsqlPackUnassign.length; z++) {
                                     //String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackUnassign[z], ExtraType.PARAM_TARGET_PARAM_NAME ,argName );
                                     String tempString = JavaUtils.replaceString(theRecords[extraObjectId[i]].plsqlPackUnassign[z], ExtraType.PARAM_TARGET_PARAM_ARRAY_NAME, n.createName(argName + "_T"));
+                                    // The source collection's own key, carried out as MCPDBWIZARD_POS.
+                                    tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_SOURCE_INDEX, "i");
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME, argName);
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME_ATYPE, theRecords[extraObjectId[i]].generatedGenericTypeName);
                                     tempString = JavaUtils.replaceString(tempString, ExtraType.PARAM_TARGET_PARAM_NAME_RTYPE, theRecords[extraObjectId[i]].generatedGenericTypeName.substring(0, theRecords[extraObjectId[i]].generatedGenericTypeName.length() - 2) + "_T");
@@ -7598,7 +7712,7 @@ public class CallableStatementParameterEngine {
                                     plsqlText.add("    " + tempString);
                                 }
                             } else {
-                                plsqlText.add("     " + n.createName(argName + "_T") + "(i) := " + argName + "(i);");
+                                plsqlText.add("     " + n.createName(argName + "_T") + "(" + n.createName(argName + "_T") + ".LAST) := " + argName + "(i);");
                             }
                             plsqlText.add("   END IF;");
                             plsqlText.add("  END LOOP;");

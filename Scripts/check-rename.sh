@@ -360,7 +360,12 @@ else
 # one notice each -- McpDateModule in pub and its test -- for the record-date parsing fix. Four
 # moves in a day is not churn, it is what a repository-wide total does when the work is spread
 # across modules; the entry above asks for a hook, and this is the fourth piece of evidence for it.
-expect "copyright chain-of-title lines" 507 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-02: 507 -> 508. ONE new file, one notice -- TIndexByRecordKeys, the harness for the
+# index-by subscript defect (ORA-06532). Moved with the commit that adds the file, as above.
+# 2026-09-02 (second move): 508 -> 509. ONE new file -- ExtraTypeSubscriptTest, the database-free
+# guard for the same defect, which the harness above cannot be (it skips by Assumption without a
+# live box, and a skip reads like a pass).
+expect "copyright chain-of-title lines" 509 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
