@@ -494,10 +494,41 @@ public class SqlStatementWrangler extends AbstractTableModel implements TableMod
             }
 
             // Check for common synonyms of DATE
-            String[] dateSyns = {"java.sql.Timestamp", "java.util.Date"};
+            //
+            // java.sql.Timestamp IS NOT ONE OF THEM, and used to be (fixed 2026-09-03). Mapping it
+            // onto DATE is how a TIMESTAMP column's bind parameter came to be declared
+            // `public java.util.Date Param<Col>` in every generated statement class -- and
+            // StatementParameters2.setParam(int, java.util.Date) then STRIPS THE SUB-SECOND PORTION
+            // on purpose, because an Oracle DATE has one-second precision and keeping the fraction
+            // would create rows you cannot find again. Correct for DATE; silently destructive for
+            // TIMESTAMP. Measured on ORCL12 through a generated MCP server: a row inserted with
+            // txn_time "2026-01-01 00:00:00.25" stored as ".0", and an equality lookup on a
+            // TIMESTAMP(6) column populated by SYSTIMESTAMP could never match -- the tool compiled,
+            // ran, reported ok, and returned [].
+            //
+            // The TIMESTAMP token below has always existed and already carries the whole correct
+            // path: the engine declares the parameter a String, emits
+            // setParam<Col>(java.sql.Timestamp | oracle.sql.TIMESTAMP | String), and binds it as
+            // `new oracle.sql.TIMESTAMP(...)`, which keeps the fraction. So this is a re-routing,
+            // not new machinery. It is the same correction the TIMESTAMPTZ / TIMESTAMPLTZ tokens
+            // below already record for their own types.
+            //
+            // Note the workaround this replaces, at CallableStatementParameterEngine ~8065: a
+            // String overload was bolted onto the DATE-token setter with the comment "without this
+            // overload a TIMESTAMP table column will not compile". That kept it COMPILING, which is
+            // why the precision loss went unnoticed for so long. That overload is harmless and
+            // stays -- DATE columns still use it.
+            String[] dateSyns = {"java.util.Date"};
             for (int q = 0; q < dateSyns.length; q++) {
                 if (paramHintJavaDataTypes[i].equalsIgnoreCase(dateSyns[q])) {
                     paramHintJavaDataTypes[i] = "DATE";
+                }
+            }
+
+            String[] timestampSyns = {"java.sql.Timestamp"};
+            for (int q = 0; q < timestampSyns.length; q++) {
+                if (paramHintJavaDataTypes[i].equalsIgnoreCase(timestampSyns[q])) {
+                    paramHintJavaDataTypes[i] = "TIMESTAMP";
                 }
             }
 

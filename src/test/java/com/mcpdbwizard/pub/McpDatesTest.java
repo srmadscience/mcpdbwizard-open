@@ -8,6 +8,7 @@ import java.util.Date;
 import java.util.TimeZone;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -307,5 +308,82 @@ class McpDatesTest {
         assertEquals("short", McpDates.toOracleUnzonedTimestampText("short"));
         // A lone dot with no digits after it: the scan must terminate, not run off the end.
         assertEquals("2019-03-01 14:25:36", McpDates.toOracleDateText("2019-03-01T14:25:36."));
+    }
+
+    // ---- parseSqlTimestamp: the form a generated TABLE tool actually emits -----------------
+    //
+    // A TIMESTAMP table column crosses MCP as java.sql.Timestamp's own toString form, because the
+    // generated row exposes it through set<Col>(String) / get<Col>String(). The index-lookup tool
+    // has to take that text back -- passing it to the ISO-only parseTimestamp was the half of the
+    // fix that would have failed at run time rather than at compile time.
+
+    @Test
+    void parseSqlTimestampReadsTheJdbcEscapeForm() {
+        java.sql.Timestamp t = McpDates.parseSqlTimestamp("2026-09-03 14:25:36.123456");
+        assertNotNull(t);
+        assertEquals("2026-09-03 14:25:36.123456", t.toString());
+    }
+
+    /** The whole reason valueOf is used rather than going through java.util.Date. */
+    @Test
+    void parseSqlTimestampKeepsSubMillisecondPrecision() {
+        assertEquals(123456000, McpDates.parseSqlTimestamp("2026-09-03 14:25:36.123456").getNanos());
+    }
+
+    @Test
+    void parseSqlTimestampStillReadsIso() {
+        assertEquals("2026-09-03 14:25:36.5",
+                McpDates.parseSqlTimestamp("2026-09-03T14:25:36.500").toString());
+    }
+
+    /**
+     * The ISO arm must keep the fraction too, and this is the assertion that caught it: reading ISO
+     * through parseTimestamp (a java.util.Date) truncated to milliseconds, so the SAME instant found
+     * a row when written in the JDBC form and none when written in ISO. Measured against a live
+     * TIMESTAMP(6) index before the fix: 1 row versus 0.
+     */
+    @Test
+    void parseSqlTimestampKeepsSubMillisecondPrecisionOnTheIsoPathToo() {
+        assertEquals(710755000, McpDates.parseSqlTimestamp("2026-09-03T06:54:23.710755").getNanos());
+        assertEquals("2026-09-03 06:54:23.710755",
+                McpDates.parseSqlTimestamp("2026-09-03T06:54:23.710755").toString());
+    }
+
+    /** Nine digits is the most a Timestamp holds; a longer fraction is cut, not rejected. */
+    @Test
+    void parseSqlTimestampTakesTheFullNanosecondField() {
+        assertEquals(123456789, McpDates.parseSqlTimestamp("2026-09-03T06:54:23.123456789").getNanos());
+    }
+
+    /** An offset is honoured on this path as on the others, and the fraction survives it. */
+    @Test
+    void parseSqlTimestampHonoursAnOffsetAndKeepsTheFraction() {
+        java.sql.Timestamp theZoned = McpDates.parseSqlTimestamp("2026-09-03T06:54:23.710755Z");
+        assertEquals(710755000, theZoned.getNanos());
+        assertEquals(McpDates.parse("2026-09-03T06:54:23.710Z").getTime() / 1000L,
+                theZoned.getTime() / 1000L);
+    }
+
+    /** A bare date has neither a space nor a T, and must still read as midnight. */
+    @Test
+    void parseSqlTimestampReadsABareDate() {
+        assertEquals("2026-09-03 00:00:00.0", McpDates.parseSqlTimestamp("2026-09-03").toString());
+    }
+
+    @Test
+    void parseSqlTimestampTakesNullAndEmpty() {
+        assertNull(McpDates.parseSqlTimestamp(null));
+        assertNull(McpDates.parseSqlTimestamp("   "));
+    }
+
+    /**
+     * Nonsense that happens to carry a space must not be reported with a message naming only the
+     * JDBC form -- the fallback exists so the caller is told the ISO forms it can use.
+     */
+    @Test
+    void parseSqlTimestampExplainsRubbishInTermsOfTheIsoForms() {
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> McpDates.parseSqlTimestamp("last tuesday"));
+        assertTrue(e.getMessage().contains("ISO-8601"), e.getMessage());
     }
 }

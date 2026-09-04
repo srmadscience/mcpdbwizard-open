@@ -86,16 +86,64 @@ class AspDatatypeHintTest {
 
     /**
      * Guards the neighbours the new entries sit between, so a future insertion cannot quietly
-     * shadow one. A plain TIMESTAMP is the interesting case: its spelling is a prefix of neither
-     * zoned name, but the tokens now differ only by a suffix.
+     * shadow one.
+     *
+     * <p><b>This test asserted {@code DATE} for {@code java.sql.Timestamp} until 2026-09-03, and
+     * that assertion was PINNING THE DEFECT.</b> It was written to catch accidental shadowing when
+     * the two zoned tokens were added — a characterisation of the neighbours, not a decision that a
+     * timestamp ought to be a DATE — and it did its job: this is the test that reported the change.
+     * The mapping was wrong, so the assertion moved rather than the code. See
+     * {@link #aPlainTimestampIsNotADate} for what it means.
      */
     @Test
     void theNeighbouringDatatypesStillResolveAsBefore() {
-        assertEquals("DATE", resolvedTypeOf("insert into t (c) values (? /* c java.sql.Timestamp */)"));
         assertEquals("DATE", resolvedTypeOf("insert into t (c) values (? /* c java.util.Date */)"));
         assertEquals("NUMBER", resolvedTypeOf("insert into t (c) values (? /* c java.math.BigDecimal */)"));
         assertEquals("JSON",
                 resolvedTypeOf("insert into t (c) values (? /* c oracle.sql.json.OracleJsonValue */)"));
         assertEquals("VECTOR", resolvedTypeOf("insert into t (c) values (? /* c double[] */)"));
+    }
+
+    /**
+     * A plain TIMESTAMP must NOT resolve to the DATE token, and the two must not be equal.
+     *
+     * <p>Sharing the token is not a cosmetic detail: it declares the generated statement class's
+     * bind field {@code java.util.Date}, and {@code StatementParameters2.setParam(int,
+     * java.util.Date)} STRIPS THE SUB-SECOND PORTION on purpose — an Oracle DATE has one-second
+     * precision, and its comment explains that keeping the fraction would create rows you cannot
+     * find again. Correct for DATE; destructive for TIMESTAMP. Measured through a generated MCP
+     * server before the fix: a row inserted with {@code 00:00:00.25} stored as {@code .0}, and an
+     * equality lookup on a {@code TIMESTAMP(6)} column populated by {@code SYSTIMESTAMP} could
+     * never match — the tool compiled, ran, reported success and returned nothing.
+     *
+     * <p>Asserting the token alone would not be enough: the value that matters is that the two
+     * differ, because it is the SHARING that routes a timestamp onto the truncating bind. So both
+     * are checked, and so is their inequality.
+     */
+    @Test
+    void aPlainTimestampIsNotADate() {
+        String theTimestamp = resolvedTypeOf("insert into t (c) values (? /* c java.sql.Timestamp */)");
+        String theDate = resolvedTypeOf("insert into t (c) values (? /* c java.util.Date */)");
+
+        assertEquals("TIMESTAMP", theTimestamp,
+                "a TIMESTAMP column sharing the DATE token binds through"
+                        + " setParam(int, java.util.Date), which truncates to whole seconds");
+        assertEquals("DATE", theDate,
+                "a real DATE column must keep the DATE token -- the truncation there is correct");
+        assertNotEquals(theDate, theTimestamp,
+                "the two tokens sharing a value is what caused the truncation; keep them apart");
+    }
+
+    /**
+     * The silent-fallback guard, for the token this fix introduced.
+     *
+     * <p>Same reasoning as {@link #theSilentStringFallbackIsNotTaken}: the failure mode being
+     * prevented is an unrecognised spelling quietly becoming STRING while generation reports
+     * success, so the negative is asserted as well as the positive.
+     */
+    @Test
+    void aPlainTimestampDoesNotFallBackToString() {
+        assertNotEquals("STRING",
+                resolvedTypeOf("insert into t (c) values (? /* c java.sql.Timestamp */)"));
     }
 }

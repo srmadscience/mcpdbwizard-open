@@ -8489,6 +8489,10 @@ public class SAAdminWrangler extends SADbWrangler {
                 String columnName = colRowSet.getString("COLUMN_NAME");
                 String oracleType = colRowSet.getString("DATA_TYPE");
                 String javaType = JavaUtils.oracle2JavaDatatype(oracleType);
+                // The type the generated MANAGER declares for this column, kept before the row
+                // surface's substitution below overwrites it. A secondary-lookup method takes its
+                // key columns as scalars of THIS type; see TableMcpInfo.Column.nativeJavaType.
+                String nativeJavaType = javaType;
                 // A bare TIMESTAMP column crosses as a plain string in Oracle's
                 // "yyyy-mm-dd hh:mm:ss.fff" form: the row exposes it through set<Col>(String) /
                 // get<Col>String() (the plain get<Col>() returns a java.sql.Timestamp), so cross it
@@ -8515,6 +8519,7 @@ public class SAAdminWrangler extends SADbWrangler {
                             "string", lobGet + "File", lobSet, lobSet + "ToNull",
                             0, alwaysIdentityCols.contains(columnName));
                     lobColumn.lobKind = lobKind;
+                    lobColumn.nativeJavaType = nativeJavaType;
                     lobColumn.lobLocatorField = JavaUtils.getJavaName("lob_row_" + columnName.toLowerCase(), javaNamingConvention, mrLog);
                     info.columns.add(lobColumn);
                     continue;
@@ -8538,6 +8543,7 @@ public class SAAdminWrangler extends SADbWrangler {
                 TableMcpInfo.Column column = new TableMcpInfo.Column(columnName.toLowerCase(), oracleType, schemaType,
                         getterName, setterName, setterName + "ToNull", pkPos, alwaysIdentityCols.contains(columnName));
                 column.javaType = javaType;
+                column.nativeJavaType = nativeJavaType;
                 info.columns.add(column);
             }
 
@@ -8568,7 +8574,13 @@ public class SAAdminWrangler extends SADbWrangler {
                         lookupColRowSet.setCurrentRowNumber(lc);
                         TableMcpInfo.Column column = (TableMcpInfo.Column)
                                 columnsByKey.get(lookupColRowSet.getString("COLUMN_NAME").toLowerCase());
-                        if (column == null) {
+                        // A LOB key column is dropped with the non-crossable ones. It resolves --
+                        // a domain index (Oracle Text) names the real CLOB column and the index
+                        // discovery query filters only on status -- but a LOB crosses as a JSON
+                        // string while the manager's index method declares java.io.File, so
+                        // emitting the call would leave the generated MCP server uncompilable in
+                        // exactly the way TableMcpInfo.Column.nativeJavaType records.
+                        if (column == null || column.lobKind != null) {
                             allResolved = false;
                             break;
                         }
@@ -8862,7 +8874,7 @@ public class SAAdminWrangler extends SADbWrangler {
                 keyRequiredArgs = keyRequiredArgs + "\"" + col.jsonKey + "\"";
                 keySummary = keySummary + col.jsonKey + " (" + col.oracleType + ")";
                 scalarCallArgs = scalarCallArgs
-                        + mcpArgConversion(col.javaType, "req.arguments().get(\"" + col.jsonKey + "\")");
+                        + mcpScalarKeyArg(col, "req.arguments().get(\"" + col.jsonKey + "\")");
             }
 
             String description = mcpLookupDescription(lookup.kind, info.tableOracleName,
@@ -8929,6 +8941,30 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.unIndent();
             theJavaCode.print("");
         }
+    }
+
+    /**
+     * Java expression converting one JSON tool argument into the type the generated MANAGER
+     * declares for that key column, for a lookup called with ORDERED SCALAR arguments.
+     *
+     * <p>Not {@link #mcpArgConversion} on {@code col.javaType}: that is the ROW surface's type,
+     * and for a TIMESTAMP column the two differ deliberately -- the row takes a String, the
+     * manager's index method takes a {@code java.sql.Timestamp}. Passing the row surface's String
+     * made the generated MCP server fail to COMPILE ("no suitable method found for
+     * getChildByIx&lt;Index&gt;"), because an index lookup has no row overload to fall back on and
+     * the numeric convenience overloads the manager emits do not cover dates. Every ROW-based
+     * site keeps using {@code col.javaType}, so the JSON shape the tools publish is unchanged.
+     *
+     * <p>The TIMESTAMP arm reads through {@code McpDates.parseSqlTimestamp} rather than
+     * {@code parseTimestamp} so that the lookup accepts the SAME text the table's other tools
+     * emit and accept for that column -- the JDBC escape form -- as well as ISO-8601. See that
+     * method for why the server must take back a value it just handed out.
+     */
+    private static String mcpScalarKeyArg(TableMcpInfo.Column col, String argExpr) {
+        if ("java.sql.Timestamp".equals(col.nativeJavaType)) {
+            return "com.mcpdbwizard.pub.McpDates.parseSqlTimestamp(" + argExpr + ")";
+        }
+        return mcpArgConversion(col.nativeJavaType, argExpr);
     }
 
     /** The generated server's tool-spec method name for a table's secondary-lookup method. */
@@ -9595,14 +9631,27 @@ public class SAAdminWrangler extends SADbWrangler {
                     String connectionString = "";
                     String afterString = "";
 
+                    // THE FIRST TWO ARMS USED TO SET connectionString/afterString AND PRINT NOTHING,
+                    // so a TIMESTAMP / TIMESTAMPTZ / TIMESTAMPLTZ column got NO assignment here at
+                    // all and every MULTI-ROW read returned it as null: the index and foreign-key
+                    // child lookups, and anything else going through processMany. The single-row
+                    // reader above set it correctly, so get_by_pk showed the value and the very
+                    // same row fetched by an index lookup showed null -- which reads like a query
+                    // fault rather than a missing line. The shared print those two arms relied on
+                    // is the commented-out line that used to sit below this block; commenting it
+                    // out silently removed them.
+                    //
+                    // Emitted the way processOne does it, NOT with the connectionString prefix that
+                    // was being assembled here: theArray[col] is the raw driver value, an
+                    // oracle.sql.TIMESTAMP, so it goes to the setRow<Col>(oracle.sql.TIMESTAMP)
+                    // overload directly. "new oracle.sql.TIMESTAMP((java.sql.Timestamp)theArray[n])"
+                    // would have compiled and thrown ClassCastException on the first row read --
+                    // the same trap processOne's own comment records.
                     if (colDataType.equals("oracle.sql.TIMESTAMPTZ")
-                            || colDataType.equals("oracle.sql.TIMESTAMPLTZ")
-                    ) {
-                        connectionString = "theConnection, (";
-                        afterString = ")";
+                            || colDataType.equals("oracle.sql.TIMESTAMPLTZ")) {
+                        processMethods.print(colNullIndent + "    new_record." + setMethod + "((" + colDataType + ")theArray[" + col + "]);");
                     } else if (colDataType.equals("java.sql.Timestamp")) {
-                        connectionString = "new oracle.sql.TIMESTAMP(";
-                        afterString = ")";
+                        processMethods.print(colNullIndent + "    new_record." + setMethod + "((oracle.sql.TIMESTAMP)theArray[" + col + "]);");
                     } else if (colDataType.equals("oracle.sql.CLOB")
                             || colDataType.equals("oracle.sql.BLOB")
                             || colDataType.equals("oracle.sql.BFILE")) {
@@ -9610,8 +9659,6 @@ public class SAAdminWrangler extends SADbWrangler {
                     } else {
                         processMethods.print(colNullIndent + "    new_record." + setMethod + "(" + connectionString + "(" + colDataType + ")theArray[" + col + "])" + afterString + ";");
                     }
-
-                    //processMethods.print(colNullIndent + "    new_record." + setMethod + "(" + connectionString + "(" + colDataType + ")theArray[" + col + "])"+afterString+";");
                     if (colNullable.equalsIgnoreCase("Y")) {
                         processMethods.print("      }");
                     }

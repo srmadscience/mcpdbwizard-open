@@ -145,3 +145,18 @@ connector_none_mcp     599
 connector_json         618
 connector_jsonrpc      618
 connector_none         598
+
+# --- charglt ------------------------------------------------------------
+#
+# The charge-limiter schema (sql/charglt*.sql, loaded by Scripts/testdata2.sh), added
+# 2026-09-03 as the regression config for three TIMESTAMP defects -- see
+# Propfiles/charglt.pb2 for what it exists to catch.
+#
+# 97 on ORCL12, ORCL19, ORCL21 and FREE23 alike, measured on the six-box run of
+# 2026-09-03. NO CROSS-VERSION SPREAD, which is expected rather than lucky: this
+# schema has no PL/SQL records and no collections, so nothing here goes through the
+# ALL_ARGUMENTS walk that 12c returns in full and later versions truncate. That is
+# why the usual "set the floor from a truncating box, never from ORCL12" caution
+# does not bite -- the truncating boxes measured the same number.
+
+charglt                 97

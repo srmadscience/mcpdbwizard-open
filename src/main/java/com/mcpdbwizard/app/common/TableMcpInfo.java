@@ -48,8 +48,37 @@ public class TableMcpInfo {
         public String lobKind;
         /** LOB column only: the public {@code oracle.sql.CLOB}/{@code BLOB} locator field (read side). */
         public String lobLocatorField;
-        /** The column's Java type (from {@code oracle2JavaDatatype}); drives date/RAW crossing. */
+        /**
+         * The column's Java type ON THE ROW SURFACE -- the type the generated row's setter takes
+         * and its getter returns for the accessors named above. Drives date/RAW crossing.
+         *
+         * <p>This is NOT always {@code oracle2JavaDatatype(oracleType)}: a TIMESTAMP column is
+         * deliberately crossed as a String here, because the row exposes it through
+         * {@code set<Col>(String)} / {@code get<Col>String()}. See {@link #nativeJavaType} for
+         * the other half of that split.
+         */
         public String javaType;
+
+        /**
+         * The column's Java type as the generated MANAGER declares it -- always
+         * {@code oracle2JavaDatatype(oracleType)}, with no row-surface substitution.
+         *
+         * <p>Separate from {@link #javaType} because the two surfaces genuinely differ and
+         * conflating them was a real defect: an index-lookup method takes its key columns as
+         * ORDERED SCALARS typed this way (there is no row overload for an index), so a TIMESTAMP
+         * key column reached {@code getChildByIx<Index>(..., java.sql.Timestamp, ...)} while the
+         * emitted handler passed the row surface's String. That does not fail at run time or
+         * degrade quietly -- the generated MCP server does not COMPILE:
+         *
+         * <pre>  error: no suitable method found for getChildByIxUrtDelIdx(...)</pre>
+         *
+         * <p>which is why the fix is a second field rather than changing {@link #javaType}:
+         * every ROW-based site (primary-key assignment, the unique-key row overload, the
+         * row&lt;-&gt;JSON helpers) still wants the String, and the JSON shape those tools publish
+         * must not move. Only the scalar index-lookup call uses this one.
+         * See {@code Propfiles/charglt.pb2} for the config that reproduces it.
+         */
+        public String nativeJavaType;
 
         public Column(String jsonKey, String oracleType, String schemaType,
                       String getterName, String setterName, String setToNullName,

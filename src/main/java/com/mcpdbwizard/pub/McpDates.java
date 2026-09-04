@@ -402,6 +402,96 @@ public final class McpDates {
     }
 
     /**
+     * Read a {@link java.sql.Timestamp} from either the JDBC escape form
+     * {@code "yyyy-mm-dd hh:mm:ss[.f...]"} or one of the ISO forms {@link #parse} accepts.
+     *
+     * <p>This exists because a generated table's TIMESTAMP column crosses MCP as the FIRST of
+     * those and a PL/SQL TIMESTAMP parameter crosses as the second, and one surface -- a table's
+     * index-lookup tool -- has to take a value the caller most likely read back off the other
+     * table tools. A generated row exposes such a column through {@code set<Col>(String)} /
+     * {@code get<Col>String()}, both of which speak {@code java.sql.Timestamp}'s own
+     * {@code toString}/{@code valueOf} form, so that is what a {@code get_by_pk} result carries
+     * and what an {@code insert} accepts. Refusing it in the lookup tool alone would mean a value
+     * this server had just emitted was not a value it would take back.
+     *
+     * <p>The JDBC form is read with {@link java.sql.Timestamp#valueOf}, not through {@link #parse}:
+     * {@code parse} returns a {@link java.util.Date} and would truncate to milliseconds, while an
+     * Oracle {@code TIMESTAMP(6)} carries microseconds and {@code valueOf} keeps all nine digits
+     * of the nanosecond field.
+     *
+     * @param theValue the caller's value, or null
+     * @return the parsed value, or null for a null (or empty) input
+     * @throws IllegalArgumentException naming the accepted ISO forms, when the text is neither
+     */
+    public static java.sql.Timestamp parseSqlTimestamp(Object theValue) {
+        if (theValue == null) {
+            return null;
+        }
+        String theText = String.valueOf(theValue).trim();
+        if (theText.length() == 0) {
+            return null;
+        }
+        // A space and no 'T' is the JDBC escape form; anything else (a bare ISO date included)
+        // goes to the ISO reader, whose message names the forms it accepts.
+        if (theText.indexOf(' ') > 0 && theText.indexOf('T') < 0) {
+            try {
+                return java.sql.Timestamp.valueOf(theText);
+            } catch (IllegalArgumentException e) {
+                // Not the JDBC form after all -- fall through rather than report a message that
+                // names only that one.
+            }
+        }
+
+        // The ISO reading, and NOT via parseTimestamp: that one goes through java.util.Date and
+        // truncates to milliseconds. Harmless while the generated DAO threw the fraction away
+        // anyway; not harmless now that a TIMESTAMP binds at full precision, because an equality
+        // lookup written in ISO would silently miss the row an identical lookup written in the
+        // JDBC form finds. Measured: "...T06:54:23.710755" found 0 rows where
+        // "... 06:54:23.710755" found 1.
+        java.util.Date theDate = parse(theValue);
+        if (theDate == null) {
+            return null;
+        }
+        java.sql.Timestamp theStamp = new java.sql.Timestamp(theDate.getTime());
+        int theNanos = isoNanoOfSecond(theText);
+        if (theNanos >= 0) {
+            theStamp.setNanos(theNanos);
+        }
+        return theStamp;
+    }
+
+    /**
+     * The nanosecond-of-second digits of an ISO text, or -1 when it carries none.
+     *
+     * <p>Read off the TEXT rather than from {@link #parse}'s result, because that result is a
+     * {@link java.util.Date} and the digits are already gone by then. {@link #parse} has by this
+     * point accepted the whole string, so the fraction here is known to be well formed -- this only
+     * has to find it and pad it to nine digits.
+     */
+    private static int isoNanoOfSecond(String theText) {
+        int theDot = theText.indexOf('.');
+        if (theDot < 0) {
+            return -1;
+        }
+        int theEnd = theDot + 1;
+        while (theEnd < theText.length()
+                && theText.charAt(theEnd) >= '0' && theText.charAt(theEnd) <= '9') {
+            theEnd++;
+        }
+        String theDigits = theText.substring(theDot + 1, theEnd);
+        if (theDigits.length() == 0) {
+            return -1;
+        }
+        if (theDigits.length() > 9) {
+            theDigits = theDigits.substring(0, 9);
+        }
+        while (theDigits.length() < 9) {
+            theDigits = theDigits + "0";
+        }
+        return Integer.parseInt(theDigits);
+    }
+
+    /**
      * Say what was expected, not merely what arrived.
      *
      * <p>The old message was {@code Unparseable date: "1990-01-01"}, which names the input and
