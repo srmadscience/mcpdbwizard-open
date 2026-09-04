@@ -26,7 +26,7 @@
     -->
     <groupId>com.mcpdbwizard</groupId>
     <artifactId>mcpdbwizard-app</artifactId>
-    <version>2.0.20</version>
+    <version>2.0.21</version>
     <packaging>jar</packaging>
 
     <licenses>
@@ -274,7 +274,16 @@
         <dependency>
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>s3</artifactId>
-            <version>2.31.7</version>
+            <!--
+              Bumped 2.31.7 -> 2.54.12 on 2026-09-04. This dependency is where NETTY comes from -
+              s3 -> netty-nio-client -> io.netty - and 2.31.7 carried netty 4.1.118.Final, which the
+              AWS Marketplace scan rejected for CVE-2026-42581 (HTTP request smuggling in
+              HttpObjectDecoder). Note the 4.1 LINE is affected, 4.1.0.Beta1 through 4.1.132.Final:
+              the first advisory read says the flaw was introduced in 4.2.0.Alpha1, which would make
+              4.1.118 a false positive, and it is not. Fixed in 4.1.133.Final; 2.54.12 manages
+              4.1.137.Final.
+            -->
+            <version>2.54.12</version>
             <optional>true</optional>
         </dependency>
 
