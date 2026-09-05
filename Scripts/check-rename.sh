@@ -377,7 +377,11 @@ else
 # AWS probe. Added after the listing audit rejected the product a SECOND time with the same
 # static-password finding: keying on the EC2 instance id alone left Fargate tasks and
 # IMDS-blocked EKS pods -- both AWS -- falling through to the hard-coded default.
-expect "copyright chain-of-title lines" 512 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-05 (fourth move): 512 -> 510. TWO files DELETED -- Ec2Metadata and EcsMetadata, the AWS
+# probes behind the instance-id/task-id initial password. The listing audit rejected that whole
+# approach twice; there is no default password to scope away from AWS any more, so detecting the
+# platform stopped being a question worth asking. First DOWNWARD move of this count.
+expect "copyright chain-of-title lines" 510 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
