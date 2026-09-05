@@ -365,7 +365,11 @@ else
 # 2026-09-02 (second move): 508 -> 509. ONE new file -- ExtraTypeSubscriptTest, the database-free
 # guard for the same defect, which the harness above cannot be (it skips by Assumption without a
 # live box, and a skip reads like a pass).
-expect "copyright chain-of-title lines" 509 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-05: 509 -> 510. ONE new file, one notice -- Ec2Metadata, the IMDSv2 probe behind the
+# instance-id initial password. Added because the AWS Marketplace listing audit rejected the product
+# for "static/default passwords"; the probe is what scopes the new behaviour to EC2 so that
+# standalone and other-cloud deployments are untouched.
+expect "copyright chain-of-title lines" 510 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
