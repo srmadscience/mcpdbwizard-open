@@ -174,3 +174,10 @@ Scripts/provisioning/known-absent.txt
 # recorded -- one orphaned fixture that could be dropped on its own, versus siblings that
 # provisioning depended on -- stopped mattering once the DDL went wholesale.
 #OtherDbs/Mnet/
+
+# The AWS demo driver. Same class as the estate driver above: an operations script, not a
+# contributor tool. It names OUR buyer account, OUR published-template bucket, and a checkout
+# path on this machine, and it stands up billable infrastructure -- so a stranger running it
+# either gets nothing or gets a surprise. Nothing in the build, the suite or the generator
+# refers to it.
+Scripts/aws-demo/

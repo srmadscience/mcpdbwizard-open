@@ -369,7 +369,15 @@ else
 # instance-id initial password. Added because the AWS Marketplace listing audit rejected the product
 # for "static/default passwords"; the probe is what scopes the new behaviour to EC2 so that
 # standalone and other-cloud deployments are untouched.
-expect "copyright chain-of-title lines" 510 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-05 (second move): 510 -> 511. ONE new file -- Scripts/aws-demo/aws-demo.sh, which
+# stands the whole product up in AWS for an hour and then deletes it. A shell script rather than
+# a Java source, which is the only thing new here: the notice is a repository-wide count, not a
+# Java-file one, so an ops script carrying the header moves it exactly like a class does.
+# 2026-09-05 (third move): 511 -> 512. ONE new file -- EcsMetadata, the ECS/Fargate half of the
+# AWS probe. Added after the listing audit rejected the product a SECOND time with the same
+# static-password finding: keying on the EC2 instance id alone left Fargate tasks and
+# IMDS-blocked EKS pods -- both AWS -- falling through to the hard-coded default.
+expect "copyright chain-of-title lines" 512 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
