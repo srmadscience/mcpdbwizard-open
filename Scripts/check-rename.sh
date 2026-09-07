@@ -381,7 +381,27 @@ else
 # probes behind the instance-id/task-id initial password. The listing audit rejected that whole
 # approach twice; there is no default password to scope away from AWS any more, so detecting the
 # platform stopped being a question worth asking. First DOWNWARD move of this count.
-expect "copyright chain-of-title lines" 510 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-06: 510 -> 511. ONE new file, and it is a COPY rather than new work --
+# public_website/mcpdbwizard-site/public/deploy/ecs-ec2.yaml, the site's served copy of
+# deploy/aws/ecs-ec2.yaml, which the AWS quickstart tells readers to curl. The template is outside
+# the open-source export (that stages from app/ only), so the site is the one public place it
+# exists. Worth flagging as the first entry here for a DUPLICATED notice: the count measures
+# occurrences, not distinct works, so a mirrored file moves it exactly like an original.
+# THIS ENTRY WAS WRITTEN A COMMIT LATE, which is the lesson in it. The publish that added the file
+# was verified with a site build and a link check and NOT with the suite, so the gate went red on
+# the next unrelated run and read as damage from that work instead of from this. A docs-only change
+# is not a suite-free change while this count is repository-wide.
+# 2026-09-06 (second move): 511 -> 512. ONE new file, one notice -- ConfigLayoutMigration, which
+# moves a pre-2.0.26 installation's flat config directory into the per-owner layout. Added with the
+# change that gives every config an owner, so that an upgraded volume's configs are not stranded in
+# a place nothing looks any more.
+# 2026-09-06 (third move): 512 -> 513. ONE new file, one notice -- ConfigLayoutMigrationTest, the
+# db-free guard on that migration. It earns its own entry rather than being folded into the one
+# above because writing it FOUND TWO DEFECTS in the code it covers: a config the migration refused
+# to overwrite had its access grants dropped anyway, and the ownership record was written before the
+# move rather than after -- so the collision guard survived exactly one restart and the config then
+# landed in the admin's namespace. Neither was visible from reading the migration.
+expect "copyright chain-of-title lines" 513 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
