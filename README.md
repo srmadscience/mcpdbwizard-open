@@ -214,6 +214,21 @@ Locally, `mvn javadoc:javadoc` writes them to `target/reports/apidocs/`. It runs
 
 ---
 
+## Known issues
+
+**[Known issues](https://mcpdbwizard.com/docs/known-issues/)** — what is wrong, what a caller
+actually sees when it bites, and the workaround for each. Most of them do not announce themselves:
+a record whose JSON keys are the generated field names rather than the column names, a `VECTOR`
+routine parameter that takes a dense array only, a config whose tool count outgrows Oracle's
+`open_cursors`.
+
+**Every open entry there is also an issue in this repository**, linked from the page. Read it before
+filing — and if one of them is biting you, say so on its issue rather than opening a new one. Three
+of those entries are documented rather than fixed *because nobody has asked*, so a comment is the
+whole difference between "nobody has ever needed this" and "somebody does".
+
+---
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md). One thing to run before opening a pull request:

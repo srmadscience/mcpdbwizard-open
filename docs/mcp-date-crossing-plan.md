@@ -1,6 +1,10 @@
 # DATE and TIMESTAMP cross MCP through one lenient, zone-less pattern — plan
 
-> **DONE 2026-08-20, except the estate run (Phase 6).** All five defects fixed and proven on the
+> **DONE — ALL PHASES, INCLUDING THE ESTATE. Shipped 2.0.6; Phase 6 closed 2026-08-28.**
+> This line said "except the estate run (Phase 6)" until 2026-09-08, while the Phase 6 note
+> **thirty lines below it in this same file** had recorded the closure since 28 August. The
+> intra-file contradiction is the whole lesson: the banner is what gets read, so a status kept
+> only in the body is a status nobody sees. All five defects fixed and proven on the
 > EMITTED code, not just on the pattern: the generated tree was compiled and its private
 > `parseIsoDate`/`formatIsoDate` driven reflectively through the six reported cases.
 >

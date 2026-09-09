@@ -401,7 +401,12 @@ else
 # to overwrite had its access grants dropped anyway, and the ownership record was written before the
 # move rather than after -- so the collision guard survived exactly one restart and the config then
 # landed in the admin's namespace. Neither was visible from reading the migration.
-expect "copyright chain-of-title lines" 513 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-07: 513 -> 516. THREE new files, three notices, all the one-command AWS demo:
+# deploy/aws/demo-stack.yaml (Oracle + the hotel schema + the product template NESTED unchanged),
+# deploy/aws/demo.sh (builds it and hands over) and deploy/mcp-prompt.sh (console -> API token ->
+# a Claude Code prompt, against any deployment). Largest single move since the count began, and it
+# is three ORIGINALS rather than a mirror like the 510 -> 511 entry above.
+expect "copyright chain-of-title lines" 516 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

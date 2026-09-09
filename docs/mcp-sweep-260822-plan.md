@@ -1,14 +1,28 @@
 # Fixing what the 2026-08-22 `orindademo` sweep found — plan
 
-> **PROPOSED, not implemented.** Nothing below has been built. The verdicts in §1 were established
-> on 2026-08-22 by checking the sweep's claims against source and against the live config, and two
-> of them **overturn the sweep's own conclusions** — read §1 before doing any of the work, because
-> the highest-severity item in the report is not a product defect at all.
+> **PARTLY SHIPPED — three of the eight phases are DONE, and this banner claimed "nothing below has
+> been built" until 2026-09-08.** It was already contradicted by Phase 1's own header six lines into
+> the body, which has said **DONE 2026-09-02** since the day it landed. Status by phase:
 >
-> **Still true at 2.0.16 (re-checked 2026-09-01), with ONE exception.** Every defect here is present
-> in the source at `810f450` and none of the eight phases has been started — except §1.3, which was
-> found and fixed on that date. It is in the same block as §1.2, so **Phase 1 now starts from an
-> extracted, tested function rather than from a string built inline in the emitter.**
+> | Phase | State |
+> |---|---|
+> | 1 — instructions describe only what was emitted | **DONE 2026-09-02**, shipped 2.0.18 |
+> | 2 — DATE inside a record | **DONE**, shipped **2.0.17** (`d2e44c2`); known issue 2 struck through. Its own plan is `mcp-record-date-parsing-plan.md`, whose one residual is a LIVE verification leg |
+> | 3 — `ORA-17072` should name the field and the limit | **OPEN** — this is known issue 6 on the site |
+> | 4 — index-by with a RECORD element fails on the way out | **DONE**, shipped **2.0.19** (`614b32d`); known issue 5 struck through, except one case on 12c |
+> | 5 — outbound `paramXxx` names | **OPEN**, and it is a DECISION before it is a fix — known issue 3 |
+> | 6 — the demo fixture | **OPEN** |
+> | 7 — operational, no code | **OPEN** |
+> | 8 — verification | **OPEN** |
+>
+> **The verdicts in §1 stand and are still the thing to read first**, established 2026-08-22 against
+> source and the live config: two of them **overturn the sweep's own conclusions**, and the
+> highest-severity item in the report is not a product defect at all.
+>
+> **How this drifted, because it is the repeating failure in `app/docs/`.** The phase headers were
+> kept current as work landed; the banner at the top was not, and the banner is what gets read. The
+> release notes and the known-issues page were accurate throughout — **when a plan doc and a shipped
+> artifact disagree, believe the artifact.**
 >
 > Findings measured against a **26ai Free server (23.26.0.0.0, PDB `FREEPDB1`, user `ORINDADEMO`)**
 > — the host `docs/testrun_260822.md` could not identify. Which Oracle line the numbers came from is
@@ -27,9 +41,9 @@ the best part of it. Its **ranking** is what needs correcting.
 |---|---|---|---|
 | 1 | `paramState` silently dropped — "severity: highest" | **NOT A DEFECT.** Fixture DDL never inserts the column | `app/sql/Demo/mcpdbwizard_demo_ddl.sql:437` |
 | — | Instructions advertise CRUD that is not exposed (filed as an aside) | **FIXED 2026-09-02** — Phase 1, see below | `SAAdminWrangler.mcpTableClause` |
-| 2 | DATE in a record publishes no format and rejects the documented one | **REAL.** Records bypass the completed date-crossing fix | `SAAdminWrangler.java:5124`, `:6375` |
+| 2 | DATE in a record publishes no format and rejects the documented one | **REAL — FIXED, 2.0.17** | `SAAdminWrangler.java:5124`, `:6375` |
 | 3 | `ORA-17072` names the value, not the column | **REAL**, and the limit is findable | `StatementParameters2.java:1032` |
-| 4 | Index-by collection READ fails `ORA-06532` | **REAL, and not covered by any existing plan** | needs investigation |
+| 4 | Index-by collection READ fails `ORA-06532` | **REAL — FIXED, 2.0.19**, except one 12c case | needs investigation |
 | — | `paramXxx` Java field names leak outbound | **REAL**, known family | `app/docs/mcp-record-crossing-plan.md` |
 | — | Server stopped twice mid-sweep | **EXPLAINED** — two configs, one licence slot | `/data/*.json`, `Licence.java:95` |
 | — | Author's `MCP_INSTRUCTIONS` discarded when the config has a duality view | **FIXED 2026-09-01**, see §1.3 | `SAAdminWrangler.mcpServerInstructions` |
@@ -198,7 +212,7 @@ one test covering both defects in it.
 
 **Also update** the `Schema.java:99` javadoc claim.
 
-### Phase 2 — DATE inside a record
+### Phase 2 — DATE inside a record — **DONE, shipped 2.0.17 (`d2e44c2`)**
 
 > **SUPERSEDED 2026-09-01 by [`mcp-record-date-parsing-plan.md`](mcp-record-date-parsing-plan.md),
 > and half of it is already DONE.** Read that plan rather than this section.
@@ -271,7 +285,7 @@ booking. Worth stating in the sweep doc so the next reader is not guessing.
 not MCP-only. Changing an exception message is low risk but wide. Confirm that is wanted rather
 than an MCP-layer wrapper.
 
-### Phase 4 — index-by with a RECORD element fails on the way OUT
+### Phase 4 — index-by with a RECORD element fails on the way OUT — **DONE, shipped 2.0.19 (`614b32d`)**
 
 **Investigate before designing.** The sweep isolated this well and its narrowing should be kept:
 

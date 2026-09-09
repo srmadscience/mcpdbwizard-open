@@ -1,6 +1,27 @@
 # A DATE inside a record goes through Jackson, not through `McpDates` — plan
 
-> **IMPLEMENTED 2026-09-01, Phases 1-3 and the db-free half of Phase 4. Phases 5 and 6 remain.**
+> **SHIPPED IN 2.0.17 (2026-09-02), and this banner said otherwise for six days — corrected
+> 2026-09-08.** Known issue 2 on the public site is struck through, the release notes carry the full
+> account including the three silent differences, and nine releases have gone out since. **The
+> dated block below this one is the 2026-09-01 implementation record and is kept as the historical
+> trail — where it and this banner disagree, this banner is current.**
+>
+> **PHASE 6 DID RUN.** The estate went six boxes green at `6126b0e` on 2026-09-06, four days after
+> the fix landed. What it did NOT have is the signal this plan asked for — see the next paragraph —
+> so it proves the change broke nothing, not that the change works end to end.
+>
+> **STILL OPEN, AND ONLY THIS: Phase 4's LIVE half.** Nothing has driven a date through a running
+> MCP server into Oracle and read it back. The tests added on 2026-09-01..03 are all database-free
+> (`McpDateModuleTest`, `McpDatesTest`, `RecordFieldCrossingNoteTest`); `TIndexByRecordKeys` belongs
+> to the index-by work, not to this. So what is proven is that the module parses correctly and that
+> the emitter wires it; what is NOT proven is what the DAO then does with the value on each Oracle
+> line — which is the whole reason Phase 4 says to run it on 12c **and** a 23ai-line box.
+>
+> **Weigh that against nine releases of field use with no report against it.** This is a gap in
+> evidence, not a known defect, and it is recorded here so it is not mistaken for either one.
+
+> **[2026-09-01 record, superseded above] IMPLEMENTED 2026-09-01, Phases 1-3 and the db-free half
+> of Phase 4.** Its "Phases 5 and 6 remain" is no longer true: 5 was released and 6 ran.
 > `McpDateModule` registers `McpDates` on the record mapper; six inputs measured through the REAL
 > emitted mapper, out of a `generic_testb_mcp` tree regenerated against ORCL12, all six now matching
 > the scalar path — including the reported bare date and the silent `+05:30`:
@@ -21,10 +42,6 @@
 > see §4. D2 keep the epoch number, D3 keep `.defaultDateFormat(...)` as a fallback, D4 release the
 > outbound `Timestamp` change as a fix.
 >
-> **STILL OPEN: Phase 4's live half and Phase 6.** Nothing has driven a date through a running MCP
-> server into Oracle and read it back, and the estate has not run. What is proven is that the
-> emitted mapper binds the value correctly; what is NOT proven is what the DAO then does with it on
-> each Oracle line. Do not record this as finished until those run.
 
 **How it was measured, because "reasoned about" is what made this defect survive.** Everything in §1
 and §2 came from a throwaway probe against the mapper the emitter actually builds, and the fix was
