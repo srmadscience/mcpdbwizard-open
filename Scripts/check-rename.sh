@@ -406,7 +406,12 @@ else
 # deploy/aws/demo.sh (builds it and hands over) and deploy/mcp-prompt.sh (console -> API token ->
 # a Claude Code prompt, against any deployment). Largest single move since the count began, and it
 # is three ORIGINALS rather than a mirror like the 510 -> 511 entry above.
-expect "copyright chain-of-title lines" 516 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-09: 516 -> 520. FOUR new files, four notices, all generated-harness smoke tests:
+# THotelTables, THotelRoutines, THotelStatements (the hotel demo config -- what deploy/aws/demo.sh
+# actually deploys, which had no test in this repository at all) and TChargltSurfaces (the
+# charge-limiter config, which was the NAMED regression fixture for two TIMESTAMP defects with
+# nothing calling it -- the only thing behind either fix was a file count).
+expect "copyright chain-of-title lines" 520 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

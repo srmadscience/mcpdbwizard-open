@@ -73,6 +73,11 @@ Scripts/testdata_other.sh
 Scripts/server_filesystem_setup.sh
 Scripts/server_bfile_setup.sh
 
+# Same reason, one step removed: this one WRITES two of those files rather than loading them,
+# re-syncing the hotel schema from the public demo repository into sql/. Without sql/ it has
+# nowhere to write, so it would fail on a path that is absent by design.
+Scripts/sync-mcpdemo.sh
+
 # The six-box estate driver. Its header is a tour of OUR hosts, it cannot start without
 # the gitignored Scripts/boxes.env, and it reloads sql/datatypes_23ai_gen.sql before every
 # 23ai run -- a file that no longer ships. Scripts/check_provisioning.sh deliberately STAYS:

@@ -288,7 +288,22 @@ if [ "$#" -gt 0 ]; then
 	echo "      A full 'mvn test' needs every tree; re-run with no arguments for that."
 	echo
 else
-	PROPFILES=$(ls "$HOMEDIR"/Propfiles/generic_test*.pb2)
+	# The generic_test* glob, PLUS the two fixture configs named explicitly.
+	#
+	# charglt and mcpdemo are NOT generic tests and are deliberately not renamed
+	# into the glob -- one is the charge-limiter regression config, the other the
+	# hotel schema the AWS demo deploys, and calling either a generic_test would
+	# misdescribe it.  They are here because T* harnesses import their trees, and
+	# a harness cannot compile against a tree a no-arg regen did not build.  That
+	# is exactly why charglt sat outside this list until 2026-09-09: nothing
+	# imported it, so generating it by default bought nothing.
+	#
+	# Adding a propfile here makes every no-arg regen longer on every box.  That
+	# is the price of the trees being testable, and it is worth paying only for a
+	# config something actually imports -- do not add one that nothing does.
+	PROPFILES=$(ls "$HOMEDIR"/Propfiles/generic_test*.pb2 \
+	               "$HOMEDIR"/Propfiles/charglt.pb2 \
+	               "$HOMEDIR"/Propfiles/mcpdemo.pb2)
 fi
 
 EXPECTED_COUNTS="$SCRIPT_DIR/provisioning/expected-file-counts.txt"

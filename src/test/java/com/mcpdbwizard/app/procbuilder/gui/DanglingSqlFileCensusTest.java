@@ -92,6 +92,25 @@ class DanglingSqlFileCensusTest {
                 if (theName == null || theOnDisk.contains(theName)) {
                     continue;
                 }
+                // A statement that carries its own TEXT is not dangling, however absent the file
+                // is. Since the 2026-08-15 SQL_TEXT_<i> migration the filename is the statement's
+                // IDENTITY -- it is where the generated class name comes from -- and no longer a
+                // promise that a file exists; inline text wins over a file of the same name on
+                // read, so a config carrying its statements is self-contained by design.
+                //
+                // This is not a loosening. It was added on 2026-09-09 when Propfiles/mcpdemo.pb2
+                // arrived: derived from the hotel demo repository's JSON config, five statements,
+                // every one of them inline and SQL_CREATE_CLASS=YES, and none of the files in
+                // Sqlfiles/ because they live in that other repository. The census called all five
+                // dangling and the create=YES assertion -- which defends ZERO configs promising a
+                // class they do not deliver -- failed. But mcpdemo DOES deliver: Amenity_list,
+                // Region_list, HotelList and the rest are in its generated tree, and
+                // THotelStatements drives all five against a live database. The census was
+                // measuring the wrong thing for a config of that shape, so what changed is the
+                // question, not the answer: both totals below are unmoved.
+                if (theStatement.getSql() != null && !theStatement.getSql().isEmpty()) {
+                    continue;
+                }
                 if (theCreateYesOnly && !"YES".equals(theStatement.getCreateClass())) {
                     continue;
                 }

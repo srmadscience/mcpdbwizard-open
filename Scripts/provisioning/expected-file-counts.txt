@@ -159,4 +159,32 @@ connector_none         598
 # why the usual "set the floor from a truncating box, never from ORCL12" caution
 # does not bite -- the truncating boxes measured the same number.
 
+# Re-measured 2026-09-09 on ORCL12, XE18, ORCL19 and FREE26: still 97 on every
+# one, so the number below has not moved since it was set.
+
 charglt                 97
+
+# --- mcpdemo ----------------------------------------------------------------
+#
+# The hotel demo schema (sql/mcpdemo_*.sql, loaded by Scripts/testdata2.sh), added
+# 2026-09-09 and named explicitly in testrun_current.sh's no-arg propfile list. It
+# is the config deploy/aws/demo.sh deploys, so it is the one customers meet.
+#
+# 146 on ORCL12, XE18, ORCL19 and FREE26 alike, measured 2026-09-09. The other two
+# boxes (ORCL21, FREE23) were not measured; each shares an Oracle line with one
+# that was, and a floor is a minimum, so the number stands until a lower one is
+# seen.
+#
+# NO CROSS-VERSION SPREAD, AND THAT WAS NOT WHAT I EXPECTED. This entry predicted
+# one before it was measured, on the grounds that UPSERT_CUSTOMER takes a
+# CUSTOMERS%ROWTYPE and ROOM_MANAGER.getRoomList returns a strong REF CURSOR --
+# exactly the shapes 12c reports in full through ALL_ARGUMENTS and every later
+# version truncates. The prediction was wrong and the measurement is kept.
+#
+# It is wrong for a good reason, which is worth more than the number: those two
+# shapes are precisely what the record-field synthesis and adoptRefCursorRowType
+# were built to reconstruct on a truncating box. A brand-new schema carrying both
+# generating IDENTICALLY on 12.1 and on 26ai is evidence that fixing them worked.
+# A spread here would have meant a gap in that synthesis, not a quirk of Oracle.
+
+mcpdemo                146
