@@ -6173,7 +6173,9 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("");
             if (comments) {
                 theJavaCode.print("// Serialize a PL/SQL ref cursor (ReadOnlyRowSet) as a JSON array of row objects");
-                theJavaCode.print("// keyed by lower-cased column name; DATE columns as ISO strings, others via Jackson");
+                theJavaCode.print("// keyed by lower-cased column name; DATE columns as ISO strings,");
+                theJavaCode.print("// TIMESTAMP columns as the same JDBC-escape text the table tools emit,");
+                theJavaCode.print("// others via Jackson");
             }
             theJavaCode.print("private static String refCursorToJson(com.mcpdbwizard.pub.ReadOnlyRowSet theRows) throws Exception");
             theJavaCode.indent();
@@ -6191,6 +6193,29 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("  for (int theCol = 0; theCol < theRows.width(); theCol++)");
             theJavaCode.print("    {");
             theJavaCode.print("    Object theValue = theRows.getObject(theCol);");
+            // A TIMESTAMP column arrives as oracle.sql.TIMESTAMP, which is a Datum and NOT a
+            // java.util.Date -- so it missed the branch below and fell through to Jackson, which
+            // reflected its internals and put Oracle's 11-byte wire form on the wire:
+            //     "txn_time":{"bytes":"eH4JAww3DS8wG9A=","length":11,"null":false,"stream":{}}
+            // Measured against charglt.showTransactions over MCP on 2026-09-10. The same column
+            // read through that config's TABLE tools came back correctly as text, so one config
+            // answered two ways for one column depending on which tool you asked.
+            //
+            // Converted to java.sql.Timestamp.toString() -- the JDBC escape form -- rather than
+            // through formatIsoDate, for two reasons. It is the spelling the table tools already
+            // emit, so both surfaces now agree; and McpDates.parseSqlTimestamp accepts it, so a
+            // value read out of a cursor can be handed straight back to an index-lookup tool.
+            // formatIsoDate would also DROP the fractional seconds, which for a TIMESTAMP is the
+            // part a caller asked for by choosing the type.
+            //
+            // THIS MUST PRECEDE THE java.util.Date BRANCH: java.sql.Timestamp IS a java.util.Date,
+            // so converting first and falling through would hand it to formatIsoDate after all.
+            //
+            // STILL UNCONVERTED: TIMESTAMPTZ and TIMESTAMPLTZ. Both need a Connection to render
+            // (stringValue(Connection)), and this helper is static and has none -- and no fixture
+            // in this repository puts a zoned timestamp in a ref cursor, so a fix here could not
+            // be tested today. They still serialize as the Datum above.
+            theJavaCode.print("    if (theValue instanceof oracle.sql.TIMESTAMP) { theValue = ((oracle.sql.TIMESTAMP) theValue).timestampValue().toString(); }");
             theJavaCode.print("    if (theValue instanceof java.util.Date) { theValue = formatIsoDate((java.util.Date) theValue); }");
             theJavaCode.print("    if (theCol > 0) { theJson.append(\",\"); }");
             theJavaCode.print("    theJson.append(theMapper.writeValueAsString(theRows.getColumnName(theCol).toLowerCase()))");

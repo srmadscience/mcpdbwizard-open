@@ -411,7 +411,11 @@ else
 # actually deploys, which had no test in this repository at all) and TChargltSurfaces (the
 # charge-limiter config, which was the NAMED regression fixture for two TIMESTAMP defects with
 # nothing calling it -- the only thing behind either fix was a file count).
-expect "copyright chain-of-title lines" 520 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-10: 520 -> 522. TWO new files, two notices: THotelMcp and TChargltMcp, which drive
+# those same two configs as MCP SERVERS rather than through the generated Java. Writing them
+# found a defect the Java level cannot see -- a TIMESTAMP column inside a ref cursor crossed the
+# wire as Oracle's internal Datum ({"bytes":"...","length":11}) instead of as text.
+expect "copyright chain-of-title lines" 522 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
