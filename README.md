@@ -12,6 +12,8 @@ calls the generated wrappers rather than writing SQL for a model to run.
 Supports Oracle **12c through 26ai**, and is regression‑tested against six live instances
 spanning that range.
 
+[![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/mcp-db-wizard)
+
 ---
 
 ## The part that is hard
