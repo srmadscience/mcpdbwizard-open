@@ -1,15 +1,20 @@
 # MCPDBWizard
 
-Point it at an Oracle schema and it reads the PL/SQL — packages, procedures, functions,
-tables, sequences — and writes the Java that calls it: typed DAO factories, callable‑statement
-wrappers, table managers, an optional SOAP layer, and a **Model Context Protocol server** that
-exposes the whole surface to an AI agent as typed tools.
+**An MCP server for Oracle, built from the objects you choose.** Tick the PL/SQL packages,
+tables, sequences and your own tested SQL statements in a console, and it generates a
+**Model Context Protocol server** exposing exactly those to an AI agent as typed tools —
+each carrying a JSON Schema derived from the procedure's real signature.
 
-Everything is generated ahead of time. The output is ordinary Java with fixed SQL statements
-and typed binds, so nothing composes a query at run time — including the MCP server, which
-calls the generated wrappers rather than writing SQL for a model to run.
+**There is no `run-sql` tool.** Anything you did not select has no tool, no method and no
+class: it is absent from the binary rather than refused at run time. Nothing composes a query
+at run time either — the generated code is ordinary Java with fixed SQL statements and typed
+binds, and the MCP server calls those wrappers rather than writing SQL for a model to run.
 
-Supports Oracle **12c through 26ai**, and is regression‑tested against six live instances
+Generating that server means generating the whole calling layer, so you get it too: typed DAO
+factories, callable-statement wrappers, table managers and an optional SOAP layer. They are
+useful on their own, but the MCP server is the point.
+
+Supports Oracle **12c through 26ai**, and is regression-tested against six live instances
 spanning that range.
 
 [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/mcp-db-wizard)
@@ -18,7 +23,7 @@ spanning that range.
 
 ## The part that is hard
 
-Exposing a database to an agent usually means handing it a `run-sql` tool. That works until the
+The usual way round is to hand the agent a `run-sql` tool, and it works until the
 schema is real: published text‑to‑SQL accuracy falls sharply on enterprise‑scale schemas
 compared with tidy benchmarks, and a wrong `UPDATE` is not a wrong answer, it is an incident.
 
