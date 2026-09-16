@@ -415,7 +415,14 @@ else
 # those same two configs as MCP SERVERS rather than through the generated Java. Writing them
 # found a defect the Java level cannot see -- a TIMESTAMP column inside a ref cursor crossed the
 # wire as Oracle's internal Datum ({"bytes":"...","length":11}) instead of as text.
-expect "copyright chain-of-title lines" 522 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-09-16: 522 -> 524. TWO new files, two notices: NoDatabaseStubServer (the single hard-coded
+# select_from_dual tool served when MCPDBWIZARD_ORACLE_HOST is the literal NO_DB_PROVIDED) and its
+# NoDbProvidedStubModeTest. Both in the web module, both database-free.
+# 2026-09-16 (second move the same day): 524 -> 526. TWO more, both in the APP module because that
+# is the half the open-source repository publishes: NoDatabaseStub (the shared tool definition plus
+# a standalone stdio/HTTP server) and NoDatabaseStubTest. The web module's NoDatabaseStubServer now
+# delegates to it rather than defining the tool twice.
+expect "copyright chain-of-title lines" 526 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
@@ -523,7 +530,18 @@ expect "Orinda* class identifiers" 0 \
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "deliberate OrindaBuild history notes" "a whole-repository total; this tree is the published subset"
 else
-    expect "deliberate OrindaBuild history notes" 8 "$(count 'OrindaBuild')"
+    # 2026-09-16: 8 -> 12, and this one had ALREADY BEEN FAILING FOR FOUR DAYS when it was found.
+    # The four are the LinkedIn drafts under proposed-li-posts/ -- three in ARTICLE-the-backstory.md
+    # and one in README.md -- added on 2026-09-12 by the article rewrite. They are legitimate
+    # history notes of exactly the kind this total exists to permit: the article's whole subject is
+    # OrindaBuild in 2002 and the same gap returning as MCP.
+    #
+    # Worth recording HOW it stayed red. This test's own javadoc says "a guard whose only trigger is
+    # a release is a guard nobody runs", which is why it was made part of mvn test -- and it then sat
+    # failing in mvn test for four days regardless, because the work in between was all documentation
+    # and marketing copy and nobody ran the app suite. Marketing files count toward a whole-repository
+    # total just as source files do.
+    expect "deliberate OrindaBuild history notes" 12 "$(count 'OrindaBuild')"
 fi
 
 # Phase 3: artifact and jar names. NOT the same as the property keys (jdbcwizard.*,
