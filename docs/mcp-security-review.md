@@ -123,6 +123,10 @@ What follows from accepting it, recorded so the consequences are not rediscovere
 - **Row-level security keyed to `USER`/`SYS_CONTEXT('USERENV', …)` will not discriminate.** An RLS
   policy driven by an application context that the server sets per call remains possible, but nothing
   in the generated code does that today, and adding it would need a per-call identity to set it from.
+  That identity now exists in the proxy (`ApiTokenAuthenticationFilter`); what is missing is the
+  carriage from there to the Oracle session. Worked through in
+  [`mcp-per-caller-scoping-plan.md`](mcp-per-caller-scoping-plan.md), which also records the
+  per-tenant-config workaround that needs nothing built.
 
 ### 3.2 Database credentials baked into generated source and config — MECHANISM ADDED
 

@@ -19,6 +19,14 @@ spanning that range.
 
 [![Listed on mcpservers.org](https://mcpservers.org/badge.svg)](https://mcpservers.org/servers/mcp-db-wizard)
 
+[![How MCPDBWizard works: at design time, objects selected against Oracle's data dictionary are saved as a config file and Java is generated for those objects only; at run time an MCP client calls a proxy that checks token, grant and rate limit, then forwards to the generated MCP server, which binds the arguments and calls Oracle.](https://mcpdbwizard.com/images/how-it-works.png)](https://mcpdbwizard.com/images/how-it-works.png)
+
+*How the full product fits together. This repository is the **generator** — the config file,
+generate & compile, and the generated MCP server. The Design pages, Runtime page and proxy are the
+web console in the [Docker image](https://mcpdbwizard.com/docs/quickstart/); here you select
+objects with the Swing tool or a config file instead, and the generated server can be run on its
+own.*
+
 ---
 
 ## The part that is hard
