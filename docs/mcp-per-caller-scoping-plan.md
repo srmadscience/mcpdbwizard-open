@@ -35,7 +35,7 @@ caller's own. That is not a control, it is a prompt.
 description is advisory text handed to a model free to ignore it, and "the model usually complies" is
 the same class of claim as "the validator usually catches it" — a filter over an input space nobody
 can enumerate. The site makes this argument at length for SQL prompts in
-[*Why the safest SQL prompt is the one that does not exist*](../../public_website/mcpdbwizard-site/src/content/writing/why-the-safest-sql-prompt-does-not-exist.md).
+[*Why the safest SQL prompt is the one that does not exist*](https://mcpdbwizard.com/writing/why-the-safest-sql-prompt-does-not-exist/).
 It is the same argument, and the same conclusion: the fix is not a better filter, it is not having
 the input.
 
