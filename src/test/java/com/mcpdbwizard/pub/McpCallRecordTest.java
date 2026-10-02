@@ -104,4 +104,26 @@ class McpCallRecordTest {
         assertTrue(McpCallRecord.line("t", null, McpCallRecord.OUTCOME_OK, 1)
                 .startsWith(McpCallRecord.PREFIX + " {"));
     }
+
+    /** The customer a call ran for is on the operator's line -- values, unlike the arguments. */
+    @Test
+    void theContextIsRecordedWithItsValues() {
+        java.util.Map<String, String> theContext = new java.util.LinkedHashMap<>();
+        theContext.put("CUSTOMER_NAME", "SUZY \"B\"");
+        String theLine = McpCallRecord.line("t", java.util.Map.of("p_secret", "x"), McpCallRecord.OUTCOME_OK, 3L,
+                theContext);
+        org.junit.jupiter.api.Assertions.assertTrue(
+                theLine.endsWith(",\"args\":[\"p_secret\"],\"context\":{\"CUSTOMER_NAME\":\"SUZY \\\"B\\\"\"}}"),
+                theLine);
+        org.junit.jupiter.api.Assertions.assertFalse(theLine.contains("\"x\""), "argument values stay out");
+    }
+
+    /** No context means no key at all, so every existing server writes the line it always did. */
+    @Test
+    void noContextLeavesTheLineUnchanged() {
+        String theOld = McpCallRecord.line("t", java.util.Map.of("a", 1), McpCallRecord.OUTCOME_OK, 3L);
+        org.junit.jupiter.api.Assertions.assertEquals(theOld,
+                McpCallRecord.line("t", java.util.Map.of("a", 1), McpCallRecord.OUTCOME_OK, 3L, java.util.Map.of()));
+        org.junit.jupiter.api.Assertions.assertFalse(theOld.contains("context"));
+    }
 }

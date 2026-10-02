@@ -51,6 +51,12 @@ public final class McpCallRecord {
     /** The database refused the work. */
     public static final String OUTCOME_DATABASE_ERROR = "database-error";
 
+    /**
+     * Refused before reaching the database: a URL context parameter was missing, empty,
+     * undeclared or repeated. The caller's configuration is wrong, not the server or the data.
+     */
+    public static final String OUTCOME_CONTEXT_REFUSED = "context-refused";
+
     /** Anything else, including a bug in the generated code. */
     public static final String OUTCOME_ERROR = "error";
 
@@ -67,6 +73,21 @@ public final class McpCallRecord {
      */
     public static String line(String theToolName, Map<String, Object> theArguments,
                               String theOutcome, long theMilliseconds) {
+        return line(theToolName, theArguments, theOutcome, theMilliseconds, null);
+    }
+
+    /**
+     * Build the record, with the URL context parameters the call ran under.
+     *
+     * <p>Their VALUES are recorded, unlike the arguments': a model did not choose them, and "for
+     * which customer did this run" is the first thing an operator reading this line needs. They are
+     * identifiers, never secrets. Null or empty writes no {@code context} key at all, so a server
+     * without context parameters writes exactly the line it wrote before they existed.
+     *
+     * @param theContext name to value, or null
+     */
+    public static String line(String theToolName, Map<String, Object> theArguments,
+                              String theOutcome, long theMilliseconds, Map<String, String> theContext) {
         StringBuilder theLine = new StringBuilder(PREFIX);
         theLine.append(" {\"tool\":\"").append(escape(theToolName));
         theLine.append("\",\"outcome\":\"").append(escape(theOutcome));
@@ -83,7 +104,21 @@ public final class McpCallRecord {
                 theFirstFlag = false;
             }
         }
-        return theLine.append("]}").toString();
+        theLine.append(']');
+        if (theContext != null && !theContext.isEmpty()) {
+            theLine.append(",\"context\":{");
+            boolean theFirstFlag = true;
+            for (Map.Entry<String, String> theEntry : theContext.entrySet()) {
+                if (!theFirstFlag) {
+                    theLine.append(',');
+                }
+                theLine.append('"').append(escape(theEntry.getKey())).append("\":\"")
+                        .append(escape(theEntry.getValue())).append('"');
+                theFirstFlag = false;
+            }
+            theLine.append('}');
+        }
+        return theLine.append('}').toString();
     }
 
     /**

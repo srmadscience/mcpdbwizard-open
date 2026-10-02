@@ -188,3 +188,41 @@ charglt                 97
 # A spread here would have meant a gap in that synthesis, not a quirk of Oracle.
 
 mcpdemo                146
+
+# --- generic_test_ctx ---------------------------------------------------------
+#
+# URL context parameters (app/docs/mcp-per-caller-scoping-plan.md section 0), added
+# 2026-10-02. Declares MCP_CONTEXT_PARAM_1=CUSTOMER_ID; its one inline statement reads
+# SYS_CONTEXT('MCP','CUSTOMER_ID') back, and it names MCPDBWIZARD_CTX.SET_VALUE so the
+# generator's refusal to publish that as a tool is exercised. TMcpContext drives it.
+#
+# 64 on ORCL12, measured 2026-10-02 -- ONE BOX ONLY so far. Most of the 64 is the shared
+# SQL library testrun_current.sh composes into every propfile's directory, plus the
+# SET_VALUE wrapper and the read-back statement's three classes. Nothing here touches
+# records or collections, so no cross-version spread is expected; lower it if a box
+# measures less, and say which.
+
+generic_test_ctx        64
+
+# --- mcpdemo_customer ---------------------------------------------------------
+#
+# The hotel schema's CUSTOMER-facing config (from the demo repository's
+# config/mcpdemo_customer.json, via Scripts/sync-mcpdemo.sh), added 2026-10-02:
+# CUSTOMER_PORTAL behind a required ?CUSTOMER_NAME= URL parameter. THotelPortalMcp
+# drives it.
+#
+# 106 on ORCL12, measured 2026-10-02 -- ONE BOX ONLY so far. The portal's cursors
+# are strong REF CURSORs over ROOM_BOOKINGS/COMPLAINTS %ROWTYPE, which the
+# mcpdemo entry above found to generate identically across versions; lower this
+# if a box measures less, and say which.
+
+mcpdemo_customer       106
+
+# --- generic_test_ctx_nopool --------------------------------------------------
+#
+# The UNPOOLED twin of generic_test_ctx (DAO_POOL=NO), added 2026-10-02 so the
+# emitted server's lock-and-single-connection context branch is compiled
+# somewhere. 63 on ORCL12: generic_test_ctx's 64 minus the DAO pool class. ONE
+# BOX ONLY so far.
+
+generic_test_ctx_nopool 63

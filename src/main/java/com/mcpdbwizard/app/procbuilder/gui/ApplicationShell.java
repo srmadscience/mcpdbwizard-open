@@ -190,6 +190,14 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
      */
     String mcpInstructions = null;
 
+    /**
+     * MCP_CONTEXT_PARAM_&lt;i&gt;: the names a client may supply on the connection URL, set in
+     * {@code SYS_CONTEXT('MCP', name)} per tool call. Propfile + web GUI, no Swing control, and
+     * held for the same reason as {@link #mcpInstructions}: the save below rebuilds the file from
+     * scratch, so a key this class does not read is dropped. Index order; never null.
+     */
+    java.util.List<String> mcpContextParams = new java.util.ArrayList<>();
+
     boolean prometheusServerFlag = false;
     boolean webServicesBfilesAreAbstractFlag = false;
     boolean finalizeMethodFlag = false;
@@ -885,6 +893,8 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
             // author cleared it. Neither emits anything, so the distinction only keeps the
             // round trip lossless.
             mcpInstructions = fileProps.getProperty("MCP_INSTRUCTIONS");
+
+            mcpContextParams = readMcpContextParams(fileProps);
 
             // WEB_SERVICES_ABSTRACT_BFILE is DELIBERATELY NOT READ. The option made the
             // generated ServiceImpl abstract, so callers supplied the BFILE upload naming
@@ -1636,6 +1646,13 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
             // set it does not gain an empty key on its first save.
             if (mcpInstructions != null) {
                 fileProps.setProperty("MCP_INSTRUCTIONS", mcpInstructions);
+            }
+
+            // Renumbered from 1: a gap in a hand-edited file carries no meaning, and the Swing
+            // save has never preserved a layout it does not control.
+            for (int i = 0; i < mcpContextParams.size(); i++) {
+                fileProps.setProperty(com.mcpdbwizard.pub.McpContextParams.PB2_KEY_PREFIX + (i + 1),
+                        mcpContextParams.get(i));
             }
 
             fileProps.setProperty("HOSTNAME", pIpField.getText() + "");
@@ -2460,6 +2477,7 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
                 }
 
 
+                configureMcpContextParams();
                 boolean bldStatus =
                         mrWrangler.generateCodeV3(codeRoot, packageNameString,
                                 authorNameString,
@@ -2589,6 +2607,13 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
                 aspSourceDirectory = new File(sqlDirField);
                 step = "start of generate";
 
+                // Batch mode reports failure by returning false rather than throwing.
+                String theContextProblem = com.mcpdbwizard.pub.McpContextParams.listProblem(mcpContextParams);
+                if (theContextProblem != null) {
+                    error("Generation failed - " + theContextProblem);
+                    return false;
+                }
+                mrWrangler.setMcpContextParams(mcpContextParams);
                 boolean retCode =
                         mrWrangler.generateCodeV3(new File(codeRootField),
                                 packageNameField, authorField,
@@ -3366,6 +3391,46 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
      * writer and the reader must never disagree about the spelling.
      */
     public static final String SQL_TEXT_KEY = SqlStatementWrangler.SQL_TEXT;
+
+    /**
+     * Hand the URL context parameters to the generator, refusing a list the generated server could
+     * not use. Checked here as well as in the web editor because a .pb2 or .json can be edited by
+     * hand, and a bad name would otherwise be emitted into a Java string literal.
+     */
+    private void configureMcpContextParams() throws CSException {
+        String theProblem = com.mcpdbwizard.pub.McpContextParams.listProblem(mcpContextParams);
+        if (theProblem != null) {
+            throw new CSException("Generation failed - " + theProblem);
+        }
+        mrWrangler.setMcpContextParams(mcpContextParams);
+    }
+
+    /**
+     * The declared MCP context parameter names, in index order, normalised to upper case. A gap
+     * in the indices is skipped rather than ending the scan, and a blank value is ignored.
+     *
+     * @param theProperties a loaded config
+     * @return the names, never null
+     */
+    public static java.util.List<String> readMcpContextParams(Properties theProperties) {
+        java.util.TreeMap<Integer, String> theByIndex = new java.util.TreeMap<>();
+        String thePrefix = com.mcpdbwizard.pub.McpContextParams.PB2_KEY_PREFIX;
+        for (String theKey : theProperties.stringPropertyNames()) {
+            if (!theKey.startsWith(thePrefix)) {
+                continue;
+            }
+            try {
+                int theIndex = Integer.parseInt(theKey.substring(thePrefix.length()));
+                String theName = theProperties.getProperty(theKey);
+                if (theName != null && !theName.trim().isEmpty()) {
+                    theByIndex.put(theIndex, com.mcpdbwizard.pub.McpContextParams.normalise(theName));
+                }
+            } catch (NumberFormatException e) {
+                // Not one of ours (MCP_CONTEXT_PARAM_X): leave it to whatever else reads keys.
+            }
+        }
+        return new java.util.ArrayList<>(theByIndex.values());
+    }
 
     /**
      * Which {@code SQL_FILENAME_<i>} record a statement name belongs to, or -1.

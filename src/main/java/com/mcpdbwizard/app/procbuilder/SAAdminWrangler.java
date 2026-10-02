@@ -142,6 +142,53 @@ public class SAAdminWrangler extends SADbWrangler {
     boolean mcpPrometheus = false;
 
     /**
+     * The URL context parameter names this config declares ({@code MCP_CONTEXT_PARAM_<i>}), in
+     * order, normalised; empty for none, in which case NOTHING about them is emitted and the server
+     * is byte-identical to one generated before they existed. Set by the caller before generation
+     * (see {@link #setMcpContextParams}) rather than threaded through generateCodeV3's positional
+     * argument list. See {@code app/docs/mcp-per-caller-scoping-plan.md} section 0.
+     */
+    java.util.List<String> mcpContextParams = new java.util.ArrayList<String>();
+
+    /**
+     * Declare the URL context parameters for the next generation. The caller validates them
+     * ({@link com.mcpdbwizard.pub.McpContextParams#listProblem}); they are emitted as Java string
+     * literals, which is safe only because a valid name is letters, digits and underscores.
+     *
+     * @param theNames the names, or null for none
+     */
+    public void setMcpContextParams(java.util.List<String> theNames) {
+        this.mcpContextParams = new java.util.ArrayList<String>();
+        if (theNames != null) {
+            for (String theName : theNames) {
+                this.mcpContextParams.add(com.mcpdbwizard.pub.McpContextParams.normalise(theName));
+            }
+        }
+    }
+
+    /** The CONTEXT_PARAMS initialiser: {@code java.util.List.of("A", "B")}. */
+    private String mcpContextParamsLiteral() {
+        StringBuilder theList = new StringBuilder("java.util.List.of(");
+        for (int i = 0; i < mcpContextParams.size(); i++) {
+            theList.append(i == 0 ? "" : ", ").append('"').append(mcpContextParams.get(i)).append('"');
+        }
+        return theList.append(')').toString();
+    }
+
+    /**
+     * Whether a routine belongs to the MCP context machinery, which must never become a tool: an
+     * agent able to call {@code MCPDBWIZARD_CTX.set_value} could choose its own customer, which is
+     * the one thing the context exists to prevent. The whole MCPDBWIZARD schema holds nothing else.
+     */
+    static boolean isMcpContextMachinery(SingleNamespaceObject theRoutine) {
+        String theOwner = theRoutine.owner == null ? "" : theRoutine.owner.toUpperCase(java.util.Locale.ROOT);
+        String thePackage = theRoutine.packageName == null ? "" : theRoutine.packageName.toUpperCase(java.util.Locale.ROOT);
+        String theName = theRoutine.oracleName == null ? "" : theRoutine.oracleName.toUpperCase(java.util.Locale.ROOT);
+        return theOwner.equals("MCPDBWIZARD") || thePackage.equals("MCPDBWIZARD_CTX")
+                || theName.contains("MCPDBWIZARD_CTX");
+    }
+
+    /**
      * One {@code {toolName, dbObject, objectType}} triple per emitted tool, collected as the tools
      * are written and turned into the server's {@code describeTools} method afterwards.
      *
@@ -4798,7 +4845,10 @@ public class SAAdminWrangler extends SADbWrangler {
                 if (theFunction.cmt.length() != 0 || theFunction.mcpProcParams == null) {
                     continue;
                 }
-                String skipReason = mcpProcUnsupportedReason(theFunction.mcpProcParams, webServicesFlag
+                String skipReason = isMcpContextMachinery(theFunction)
+                        ? "it is the MCP context package, which sets the URL context parameters;"
+                          + " an agent able to call it could choose its own customer"
+                        : mcpProcUnsupportedReason(theFunction.mcpProcParams, webServicesFlag
                         , extraSqlCheckBox);
                 if (skipReason != null) {
                     mrLog.info("MCP: skipping PL/SQL routine " + theFunction.oracleName
@@ -5535,6 +5585,39 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("  {");
         theJavaCode.print("  AUDIT_LOG.warning(\"Could not compare the tool count against open_cursors: \" + e.getMessage());");
         theJavaCode.print("  }");
+        if (!mcpContextParams.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("// This config declares URL context parameters, so every call will set the MCP");
+                theJavaCode.print("// context. If this account cannot (install.sql never run, or grant.sql not run for");
+                theJavaCode.print("// it), say so loudly NOW -- but keep serving: an exit reaches a stdio client only as");
+                theJavaCode.print("// a timeout, while each refused call carries the install/grant sentence to the agent,");
+                theJavaCode.print("// and starts working by itself once a DBA fixes the database.");
+            }
+            theJavaCode.print("try");
+            theJavaCode.print("  {");
+            if (mcpPooled) {
+                theJavaCode.print("  thePool.withFactory(theFactory -> {");
+                theJavaCode.print("    com.mcpdbwizard.pub.McpContextParams.applyToSession(theFactory.theConnection, java.util.Map.of());");
+                theJavaCode.print("    return null; });");
+            } else {
+                theJavaCode.print("  theFactory.confirmConnection();");
+                theJavaCode.print("  com.mcpdbwizard.pub.McpContextParams.applyToSession(theFactory.theConnection, java.util.Map.of());");
+            }
+            theJavaCode.print("  }");
+            theJavaCode.print("catch (Exception e)");
+            theJavaCode.print("  {");
+            theJavaCode.print("  String theNotInstalled = com.mcpdbwizard.pub.McpContextParams.notInstalledReason(e);");
+            theJavaCode.print("  if (theNotInstalled != null)");
+            theJavaCode.print("    {");
+            theJavaCode.print("    new com.mcpdbwizard.pub.JulLog(\"" + serverClassName + "\").error(theNotInstalled"
+                    + " + \" Every tool call will be refused until this is fixed.\");");
+            theJavaCode.print("    }");
+            theJavaCode.print("  else");
+            theJavaCode.print("    {");
+            theJavaCode.print("    AUDIT_LOG.warning(\"Could not check the MCP context at start-up: \" + e.getMessage());");
+            theJavaCode.print("    }");
+            theJavaCode.print("  }");
+        }
         theJavaCode.print("");
         if (comments) {
             theJavaCode.print("// Default transport is stdio; run with args \"http [port]\" to serve the MCP");
@@ -5621,7 +5704,18 @@ public class SAAdminWrangler extends SADbWrangler {
         }
         theJavaCode.print("  io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider theProvider =");
         theJavaCode.print("      io.modelcontextprotocol.server.transport.HttpServletStreamableServerTransportProvider.builder()");
-        theJavaCode.print("          .jsonMapper(theMapper).mcpEndpoint(\"/mcp\").build();");
+        if (mcpContextParams.isEmpty()) {
+            theJavaCode.print("          .jsonMapper(theMapper).mcpEndpoint(\"/mcp\").build();");
+        } else {
+            if (comments) {
+                theJavaCode.print("          // Parsed per HTTP request, so each tool call sees the values on its own URL.");
+            }
+            theJavaCode.print("          .jsonMapper(theMapper).mcpEndpoint(\"/mcp\")");
+            theJavaCode.print("          .contextExtractor(theHttpRequest -> io.modelcontextprotocol.common.McpTransportContext.create(");
+            theJavaCode.print("              java.util.Map.of(com.mcpdbwizard.pub.McpContextParams.TRANSPORT_CONTEXT_KEY,");
+            theJavaCode.print("                  com.mcpdbwizard.pub.McpContextParams.fromQueryString(theHttpRequest.getQueryString(), CONTEXT_PARAMS))))");
+            theJavaCode.print("          .build();");
+        }
         theJavaCode.print("  McpServer.sync(theProvider)");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
@@ -5725,6 +5819,12 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("    theContext.addFilter(new org.eclipse.jetty.ee10.servlet.FilterHolder(theSizeFilter), \"/mcp/*\", java.util.EnumSet.of(jakarta.servlet.DispatcherType.REQUEST));");
         theJavaCode.print("    }");
         theJavaCode.print("  final com.mcpdbwizard.pub.McpHttpPolicy theOriginPolicy = com.mcpdbwizard.pub.McpHttpPolicy.fromEnvironment();");
+        if (comments) {
+            theJavaCode.print("  // FIRST in the chain: rewrite the MCP SDK's transport error bodies (no session, unknown");
+            theJavaCode.print("  // session, unparseable message, a method rejected before initialize) into plain JSON-RPC");
+            theJavaCode.print("  // errors. As written by SDK 2.0.0 they are the whole exception object, stack trace and all.");
+        }
+        theJavaCode.print("  theContext.addFilter(new org.eclipse.jetty.ee10.servlet.FilterHolder(new com.mcpdbwizard.pub.McpErrorBodyFilter()), \"/mcp/*\", java.util.EnumSet.of(jakarta.servlet.DispatcherType.REQUEST));");
         theJavaCode.print("  jakarta.servlet.Filter theOriginFilter = new jakarta.servlet.Filter() {");
         theJavaCode.print("    public void doFilter(jakarta.servlet.ServletRequest theReq, jakarta.servlet.ServletResponse theResp, jakarta.servlet.FilterChain theChain) throws java.io.IOException, jakarta.servlet.ServletException {");
         theJavaCode.print("      String theOrigin = ((jakarta.servlet.http.HttpServletRequest) theReq).getHeader(\"Origin\");");
@@ -5808,6 +5908,20 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("  }");
         theJavaCode.print("else");
         theJavaCode.print("  {");
+        if (!mcpContextParams.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("  // stdio has no URL: the values come from the environment, fixed for this process.");
+                theJavaCode.print("  // Missing or empty does NOT stop the server: an exit here reaches a stdio client only");
+                theJavaCode.print("  // as a connection that never initialised. It starts, and every tool call is refused");
+                theJavaCode.print("  // with the same sentence, which the agent can read out to whoever has to fix it.");
+            }
+            theJavaCode.print("  theStdioContext = com.mcpdbwizard.pub.McpContextParams.fromEnvironment(System.getenv(), CONTEXT_PARAMS);");
+            theJavaCode.print("  if (theStdioContext.getProblem() != null)");
+            theJavaCode.print("    {");
+            theJavaCode.print("    new com.mcpdbwizard.pub.JulLog(\"" + serverClassName + "\").error(theStdioContext.getProblem()"
+                    + " + \" Every tool call will be refused until it is set.\");");
+            theJavaCode.print("    }");
+        }
         theJavaCode.print("  McpServer.sync(new StdioServerTransportProvider(theMapper))");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
@@ -5879,6 +5993,34 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.unIndent();
         theJavaCode.print("");
 
+        if (!mcpContextParams.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("// Set the URL context parameters on the session a call is about to use. A failure");
+                theJavaCode.print("// is a CSException so it is reported as a database error - and when the cause is the");
+                theJavaCode.print("// package missing or not granted, the message says which script to run.");
+            }
+            theJavaCode.print("private static void applyContext(java.sql.Connection theConnection,"
+                    + " java.util.Map<String, String> theValues) throws com.mcpdbwizard.pub.CSException");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("try");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("com.mcpdbwizard.pub.McpContextParams.applyToSession(theConnection, theValues);");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("catch (java.sql.SQLException e)");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("String theNotInstalled = com.mcpdbwizard.pub.McpContextParams.notInstalledReason(e);");
+            theJavaCode.print("throw new com.mcpdbwizard.pub.CSException(theNotInstalled != null ? theNotInstalled"
+                    + " : \"Could not set the MCP context: \" + e.getMessage());");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("");
+        }
         theJavaCode.print("private static CallToolResult call(" + MCP_EXCHANGE_TYPE
                 + " theExchange, " + MCP_CALL_REQUEST_TYPE
                 + " theRequest, DocOp theOperation)");
@@ -5901,6 +6043,9 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("// where the audit record is built. It is only recorded at the values level.");
         }
         theJavaCode.print("String theJson = null;");
+        if (!mcpContextParams.isEmpty()) {
+            theJavaCode.print("java.util.Map<String, String> theContextValues = null;");
+        }
         if (mcpPrometheus) {
             if (comments) {
                 theJavaCode.print("// Inbound volume. This serialises the arguments purely to size them, which no");
@@ -5928,6 +6073,40 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("        .build();");
         theJavaCode.print("}");
         theJavaCode.unIndent();
+        if (!mcpContextParams.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("// The URL context parameters, refused before touching the pool. Over HTTP they were");
+                theJavaCode.print("// parsed from THIS request's URL; over stdio, from the environment at start-up.");
+            }
+            theJavaCode.print("com.mcpdbwizard.pub.McpContextParams.Resolved theContext = null;");
+            theJavaCode.print("if (theExchange != null && theExchange.transportContext() != null"
+                    + " && theExchange.transportContext().get(com.mcpdbwizard.pub.McpContextParams.TRANSPORT_CONTEXT_KEY)"
+                    + " instanceof com.mcpdbwizard.pub.McpContextParams.Resolved)");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("theContext = (com.mcpdbwizard.pub.McpContextParams.Resolved) theExchange.transportContext()"
+                    + ".get(com.mcpdbwizard.pub.McpContextParams.TRANSPORT_CONTEXT_KEY);");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("else");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("theContext = theStdioContext;");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("if (theContext == null || theContext.getProblem() != null)");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("theOutcome = " + MCP_CALL_RECORD_CLASS + ".OUTCOME_CONTEXT_REFUSED;");
+            theJavaCode.print("return CallToolResult.builder().isError(true)");
+            theJavaCode.print("        .addTextContent(theContext == null ? \"This server requires URL context parameters"
+                    + " and none were supplied.\" : theContext.getProblem())");
+            theJavaCode.print("        .build();");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("theContextValues = theContext.getValues();");
+            theJavaCode.print("final java.util.Map<String, String> theAppliedContext = theContextValues;");
+        }
         if (mcpPooled) {
             if (comments) {
                 theJavaCode.print("// Each call borrows its own factory, so concurrent tools no longer queue behind");
@@ -5937,7 +6116,17 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("try");
             theJavaCode.indent();
             theJavaCode.print("{");
-            theJavaCode.print("theJson = thePool.withFactory(theFactory -> theOperation.run(theFactory));");
+            if (mcpContextParams.isEmpty()) {
+                theJavaCode.print("theJson = thePool.withFactory(theFactory -> theOperation.run(theFactory));");
+            } else {
+                if (comments) {
+                    theJavaCode.print("// Clear-then-set on THIS borrowed session, before the operation: a pooled session");
+                    theJavaCode.print("// served someone else last, and clearing first is what keeps their values out.");
+                }
+                theJavaCode.print("theJson = thePool.withFactory(theFactory -> {");
+                theJavaCode.print("    applyContext(theFactory.theConnection, theAppliedContext);");
+                theJavaCode.print("    return theOperation.run(theFactory); });");
+            }
         } else {
             theJavaCode.print("synchronized (LOCK)");
             theJavaCode.indent();
@@ -5945,6 +6134,10 @@ public class SAAdminWrangler extends SADbWrangler {
             theJavaCode.print("try");
             theJavaCode.indent();
             theJavaCode.print("{");
+            if (!mcpContextParams.isEmpty()) {
+                theJavaCode.print("theFactory.confirmConnection();");
+                theJavaCode.print("applyContext(theFactory.theConnection, theAppliedContext);");
+            }
             theJavaCode.print("theJson = theOperation.run();");
         }
         theJavaCode.print("theOutcome = theJson == null ? " + MCP_CALL_RECORD_CLASS + ".OUTCOME_NOT_FOUND : "
@@ -6020,12 +6213,22 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("AUDIT_LOG.info(" + MCP_CALL_RECORD_CLASS + ".line(");
         theJavaCode.print("        theRequest == null ? null : theRequest.name(),");
         theJavaCode.print("        theRequest == null ? null : theRequest.arguments(),");
-        theJavaCode.print("        theOutcome, theElapsedMillis));");
+        if (mcpContextParams.isEmpty()) {
+            theJavaCode.print("        theOutcome, theElapsedMillis));");
+        } else {
+            // The customer the call ran for belongs on the operator's line too, not only in the
+            // audit event: an operator reading a log should not need the audit sink to answer it.
+            theJavaCode.print("        theOutcome, theElapsedMillis, theContextValues));");
+        }
         theJavaCode.print("theAuditSink.record(com.mcpdbwizard.pub.McpAuditEvent.of(");
         theJavaCode.print("        theRequest == null ? null : theRequest.name(),");
         theJavaCode.print("        theRequest == null ? null : theRequest.arguments(),");
         theJavaCode.print("        theOutcome, theElapsedMillis,");
-        theJavaCode.print("        theJson, theAuditLevel, theAuditMaxBytes));");
+        if (mcpContextParams.isEmpty()) {
+            theJavaCode.print("        theJson, theAuditLevel, theAuditMaxBytes));");
+        } else {
+            theJavaCode.print("        theJson, theAuditLevel, theAuditMaxBytes).withContext(theContextValues));");
+        }
 
         // The in-protocol log frame. Sent unconditionally and at DEBUG, which together are what
         // make it both honest and free: the SDK advertises the `logging` capability on every
@@ -16042,6 +16245,15 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("private static int theAuditMaxBytes = com.mcpdbwizard.pub.McpAuditSinks.DEFAULT_MAX_BYTES;");
         theJavaCode.print("private static final com.mcpdbwizard.pub.LogInterface AUDIT_LOG "
                 + "= new com.mcpdbwizard.pub.JulLog(\"" + serverClassName + "\");");
+        if (!mcpContextParams.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("// URL context parameters (MCP_CONTEXT_PARAM_<i>): every one is REQUIRED on each");
+                theJavaCode.print("// call and set in SYS_CONTEXT('MCP', name) before the call runs. Over HTTP they come");
+                theJavaCode.print("// from the request's query string; over stdio from MCP_CONTEXT_<NAME>, read once.");
+            }
+            theJavaCode.print("private static final java.util.List<String> CONTEXT_PARAMS = " + mcpContextParamsLiteral() + ";");
+            theJavaCode.print("private static com.mcpdbwizard.pub.McpContextParams.Resolved theStdioContext = null;");
+        }
         if (mcpPrometheus) {
             if (comments) {
                 theJavaCode.print("// Prometheus metrics (PROMETHEUS_SERVER=YES). Collection is always on from");

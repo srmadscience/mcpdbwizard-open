@@ -163,6 +163,13 @@ public class Schema {
     private List<Procedure> procedures = new ArrayList<>();
     private List<SqlStatement> sqlStatements = new ArrayList<>();
 
+    /**
+     * The MCP context parameters this config declares ({@code MCP_CONTEXT_PARAM_<i>}). Not in the
+     * full constructor: every caller of that would have to change for a list most configs leave
+     * empty. Set it with {@link #setMcpContextParams} or {@link #setMcpContextParamNames}.
+     */
+    private List<McpContextParam> mcpContextParams = new ArrayList<>();
+
     /** Any PB2 key this model does not recognise, preserved verbatim for a lossless round-trip. */
     private Map<String, String> extraProperties = new LinkedHashMap<>();
 
@@ -1154,6 +1161,51 @@ public class Schema {
                 && sequences.isEmpty() && sqlStatements.isEmpty();
     }
 
+    public List<McpContextParam> getMcpContextParams() {
+        return mcpContextParams;
+    }
+
+    public void setMcpContextParams(List<McpContextParam> mcpContextParams) {
+        this.mcpContextParams = (mcpContextParams != null) ? mcpContextParams : new ArrayList<>();
+    }
+
+    /**
+     * The declared context parameter names, in index order. What the generator and the editor
+     * actually want; the indices exist only to keep a hand-edited {@code .pb2} lossless.
+     *
+     * @return the names, never null
+     */
+    public List<String> getMcpContextParamNames() {
+        List<McpContextParam> theSorted = new ArrayList<>(mcpContextParams);
+        theSorted.sort(java.util.Comparator.comparingInt(McpContextParam::getIndex));
+        List<String> theNames = new ArrayList<>();
+        for (McpContextParam theParam : theSorted) {
+            if (theParam.getName() != null) {
+                theNames.add(theParam.getName());
+            }
+        }
+        return theNames;
+    }
+
+    /**
+     * Replace the declared names, numbered from 1 in the order given. Names are stored
+     * {@link com.mcpdbwizard.pub.McpContextParams#normalise normalised}; validity is the caller's to
+     * check first, with {@link com.mcpdbwizard.pub.McpContextParams#listProblem}.
+     *
+     * @param theNames the names, or null for none
+     */
+    public void setMcpContextParamNames(List<String> theNames) {
+        this.mcpContextParams = new ArrayList<>();
+        if (theNames == null) {
+            return;
+        }
+        int theIndex = 1;
+        for (String theName : theNames) {
+            this.mcpContextParams.add(new McpContextParam(theIndex++,
+                    com.mcpdbwizard.pub.McpContextParams.normalise(theName)));
+        }
+    }
+
     public Map<String, String> getExtraProperties() {
         return extraProperties;
     }
@@ -1346,8 +1398,10 @@ public class Schema {
         this.tables = new ArrayList<>();
         this.procedures = new ArrayList<>();
         this.sqlStatements = new ArrayList<>();
+        this.mcpContextParams = new ArrayList<>();
         this.extraProperties = new LinkedHashMap<>();
 
+        TreeMap<Integer, McpContextParam> ctxMap = new TreeMap<>();
         TreeMap<Integer, Sequence> seqMap = new TreeMap<>();
         TreeMap<Integer, Table> tabMap = new TreeMap<>();
         TreeMap<Integer, Procedure> procMap = new TreeMap<>();
@@ -1414,6 +1468,9 @@ public class Schema {
                     case "SQL_TEXT": stmt(stmtMap, idx).setSql(value); continue;
                     case "SQL_CREATE_CLASS": stmt(stmtMap, idx).setCreateClass(value); continue;
                     case "SQL_TURN_CURSORS_INTO_RECORDS": stmt(stmtMap, idx).setTurnCursorsIntoRecords(value); continue;
+                    case "MCP_CONTEXT_PARAM":
+                        ctxMap.put(idx, new McpContextParam(idx, value));
+                        continue;
                     default: break;
                 }
             }
@@ -1432,6 +1489,7 @@ public class Schema {
         this.tables.addAll(tabMap.values());
         this.procedures.addAll(procMap.values());
         this.sqlStatements.addAll(stmtMap.values());
+        this.mcpContextParams.addAll(ctxMap.values());
     }
 
     private static Sequence seq(TreeMap<Integer, Sequence> m, int i) {
@@ -1545,6 +1603,7 @@ public class Schema {
         for (Table t : tables) { t.toPb2(p); }
         for (Procedure pr : procedures) { pr.toPb2(p); }
         for (SqlStatement st : sqlStatements) { st.toPb2(p); }
+        for (McpContextParam cp : mcpContextParams) { cp.toPb2(p); }
         return p;
     }
 
@@ -1658,6 +1717,13 @@ public class Schema {
         List<Object> stmtList = new ArrayList<>();
         for (SqlStatement st : sqlStatements) { stmtList.add(st.toJsonMap()); }
         m.put("sqlStatements", stmtList);
+        // Only when declared. Every committed .json config is byte-for-byte ConfigConverter output,
+        // so an always-present empty list would rewrite all of them for a feature none of them uses.
+        if (!mcpContextParams.isEmpty()) {
+            List<Object> ctxList = new ArrayList<>();
+            for (McpContextParam cp : mcpContextParams) { ctxList.add(cp.toJsonMap()); }
+            m.put("mcpContextParams", ctxList);
+        }
         LinkedHashMap<String, Object> extra = new LinkedHashMap<>();
         extra.putAll(extraProperties);
         m.put("extraProperties", extra);
@@ -1763,6 +1829,8 @@ public class Schema {
         for (Object o : asList(m.get("procedures"))) { this.procedures.add(Procedure.fromJsonMap((Map<String, Object>) o)); }
         this.sqlStatements = new ArrayList<>();
         for (Object o : asList(m.get("sqlStatements"))) { this.sqlStatements.add(SqlStatement.fromJsonMap((Map<String, Object>) o)); }
+        this.mcpContextParams = new ArrayList<>();
+        for (Object o : asList(m.get("mcpContextParams"))) { this.mcpContextParams.add(McpContextParam.fromJsonMap((Map<String, Object>) o)); }
         this.extraProperties = new LinkedHashMap<>();
         Object extra = m.get("extraProperties");
         if (extra instanceof Map) {

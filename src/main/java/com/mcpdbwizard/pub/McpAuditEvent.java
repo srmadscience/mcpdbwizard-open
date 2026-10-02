@@ -86,6 +86,20 @@ public final class McpAuditEvent {
      */
     private final String theTarget;
 
+    /**
+     * The URL context parameters the call ran under ({@code SYS_CONTEXT('MCP', ...)}), or empty.
+     *
+     * <p>Recorded at EVERY level, values included, unlike the arguments: they were not chosen by
+     * a model, and "on whose behalf did this run" is the first question an audit of a multi-
+     * customer server is asked. They are identifiers, never secrets -- the docs say so.
+     *
+     * <p>Not final, and set only through {@link #withContext} between building the event and
+     * handing it to a sink, so that the four constructors above need not each grow a parameter
+     * that only one producer sets. Empty means the field is omitted from the JSON, so a server
+     * with no context parameters writes byte-identical records.
+     */
+    private Map<String, String> theContext = Collections.<String, String>emptyMap();
+
     McpAuditEvent(String theIdValue, long theTimestampValue, String theToolNameValue, String theOutcomeValue,
                   long theDurationValue, Map<String, Object> theArgumentsValue, boolean theValuesFlagValue,
                   String theResponseValue, long theResponseBytesValue, String theResponseHashValue,
@@ -472,6 +486,20 @@ public final class McpAuditEvent {
             theJson.append(']');
         }
 
+        if (!theContext.isEmpty()) {
+            theJson.append(",\"context\":{");
+            boolean theFirstFlag = true;
+            for (Map.Entry<String, String> theEntry : theContext.entrySet()) {
+                if (!theFirstFlag) {
+                    theJson.append(',');
+                }
+                theJson.append('"').append(escape(theEntry.getKey())).append("\":\"")
+                        .append(escape(theEntry.getValue())).append('"');
+                theFirstFlag = false;
+            }
+            theJson.append('}');
+        }
+
         if (theResponse != null) {
             theJson.append(",\"response\":\"").append(escape(theResponse)).append('"');
             theJson.append(",\"responseBytes\":").append(theResponseBytes);
@@ -492,6 +520,24 @@ public final class McpAuditEvent {
                 || OP_ACCESS_CHANGED.equals(theOperationValue)
                 || OP_CONFIG_SAVED.equals(theOperationValue)
                 || OP_CONFIG_DELETED.equals(theOperationValue);
+    }
+
+    /**
+     * Attach the URL context parameters this call ran under. Call before the event reaches a sink.
+     *
+     * @param theContextValue name to value, or null/empty for none
+     * @return this event
+     */
+    public McpAuditEvent withContext(Map<String, String> theContextValue) {
+        this.theContext = (theContextValue == null || theContextValue.isEmpty())
+                ? Collections.<String, String>emptyMap()
+                : Collections.unmodifiableMap(new LinkedHashMap<String, String>(theContextValue));
+        return this;
+    }
+
+    /** The URL context parameters the call ran under; empty when none. */
+    public Map<String, String> getContext() {
+        return theContext;
     }
 
     /** What an administrative action acted on, or null. */

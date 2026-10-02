@@ -422,7 +422,32 @@ else
 # is the half the open-source repository publishes: NoDatabaseStub (the shared tool definition plus
 # a standalone stdio/HTTP server) and NoDatabaseStubTest. The web module's NoDatabaseStubServer now
 # delegates to it rather than defining the tool twice.
-expect "copyright chain-of-title lines" 526 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-10-02: 526 -> 537, in TWO parts, and the first is the reason this entry is long.
+# (a) 526 -> 533 had ALREADY HAPPENED, unrecorded, over two weeks: SEVEN new files carrying the
+# notice, none of which updated this number -- Scripts/capture-reach-metrics.sh (39afb86,
+# 2026-09-16), public_website/mcpdbwizard-site/scripts/indexnow.mjs (7213194, 2026-09-25), and
+# five under deploy/gcp/ (main.tf, variables.tf, outputs.tf, cloud-init.yaml.tftpl in b688e7d,
+# 2026-09-30; e2e-test.sh in 1457011, 2026-10-01). So BrandingInvariantsTest was red on main for
+# that whole stretch and nobody ran the full suite to see it. All seven are originals, not mirrors.
+# (b) 533 -> 537: FOUR new files, the first phase of the URL context parameters
+# (app/docs/mcp-per-caller-scoping-plan.md section 0): McpContextParams (pub) and McpContextParam
+# (schema), and a test for each.
+# 2026-10-02 (later): 537 -> 541. FOUR new files, phase 2 of the same feature: the three SHIPPED
+# Oracle scripts under app/db/mcp-context/ (install.sql, grant.sql, uninstall.sql -- REM headers,
+# so the notice is the same line in SQL*Plus comment form) and McpContextLiveTest.
+# 2026-10-02 (phases 3 and 4): 541 -> 543. TWO new files: TMcpContext (the generated-server
+# harness for Propfiles/generic_test_ctx.pb2, which itself carries no notice -- no propfile does)
+# and the web module's McpProxyContextEndToEndTest.
+# 2026-10-02 (phase 6): 543 -> 544. ONE new file, THotelPortalMcp, the harness for the hotel
+# demo's customer-facing config (Propfiles/mcpdemo_customer.pb2, synced from the demo repository).
+# 2026-10-02 (phase 8): 544 -> 545. ONE new file, TMcpContextUnpooled -- TMcpContext's checks against
+# the DAO_POOL=NO twin, generic_test_ctx_nopool.
+# 2026-10-02 (gap fixes): 545 -> 546. ONE new file, ContextPreflightTest -- the console's start
+# check for a config whose database lacks the MCP context.
+# 2026-10-02 (stack-trace leak): 546 -> 549. THREE new files: McpErrorBodies and McpErrorBodyFilter
+# (pub), which turn the MCP SDK's transport error bodies -- a whole Java exception, stack trace and
+# all -- into plain JSON-RPC errors, and McpErrorBodiesTest.
+expect "copyright chain-of-title lines" 549 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

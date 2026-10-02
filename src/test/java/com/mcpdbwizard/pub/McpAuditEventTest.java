@@ -305,4 +305,20 @@ class McpAuditEventTest {
         assertNotNull(theEvent.getId());
         assertTrue(theEvent.getTimestampMillis() > 0L);
     }
+
+    /** URL context parameters: recorded at every level, and absent entirely when there are none. */
+    @Test
+    void contextIsRecordedWhenPresentAndAbsentOtherwise() {
+        java.util.Map<String, String> theContext = new java.util.LinkedHashMap<>();
+        theContext.put("CUSTOMER_ID", "42");
+        theContext.put("REGION", "no\"rth");
+        String theWith = McpAuditEvent.of("t", java.util.Map.of(), McpCallRecord.OUTCOME_OK, 1L, null,
+                McpAuditSinks.Level.NAMES, 0).withContext(theContext).toJson();
+        org.junit.jupiter.api.Assertions.assertTrue(
+                theWith.contains("\"context\":{\"CUSTOMER_ID\":\"42\",\"REGION\":\"no\\\"rth\"}"), theWith);
+
+        String theWithout = McpAuditEvent.of("t", java.util.Map.of(), McpCallRecord.OUTCOME_OK, 1L, null,
+                McpAuditSinks.Level.NAMES, 0).withContext(java.util.Map.of()).toJson();
+        org.junit.jupiter.api.Assertions.assertFalse(theWithout.contains("context"), theWithout);
+    }
 }

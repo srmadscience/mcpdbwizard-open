@@ -301,9 +301,14 @@ else
 	# Adding a propfile here makes every no-arg regen longer on every box.  That
 	# is the price of the trees being testable, and it is worth paying only for a
 	# config something actually imports -- do not add one that nothing does.
+	#
+	# mcpdemo_customer (2026-10-02) is the hotel schema's CUSTOMER-facing config:
+	# CUSTOMER_PORTAL behind a required ?CUSTOMER_NAME= URL parameter. THotelPortalMcp
+	# launches its server, so it earns its place by the rule above.
 	PROPFILES=$(ls "$HOMEDIR"/Propfiles/generic_test*.pb2 \
 	               "$HOMEDIR"/Propfiles/charglt.pb2 \
-	               "$HOMEDIR"/Propfiles/mcpdemo.pb2)
+	               "$HOMEDIR"/Propfiles/mcpdemo.pb2 \
+	               "$HOMEDIR"/Propfiles/mcpdemo_customer.pb2)
 fi
 
 EXPECTED_COUNTS="$SCRIPT_DIR/provisioning/expected-file-counts.txt"
