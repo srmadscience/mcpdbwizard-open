@@ -84,6 +84,9 @@ public class ProcBuilder {
             String overideCodeBaseDirectory = "";
             String overideSqlFileDirectory = "";
 
+            // Set when a file's generation lost its database connection: the batch then exits 3, so
+            // a caller sees a failed run rather than a successful one with half a tree.
+            boolean connectionLost = false;
             for (int i = 2; i < args.length; i++) {
                 if (args[i].startsWith(CBD)) {
                     overideCodeBaseDirectory = new String(args[i].substring(CBD.length()));
@@ -110,6 +113,14 @@ public class ProcBuilder {
                             } else {
                                 if (testFile.canRead()) {
                                     mrApplicationShell.generateCodeFromIniFile(overideCodeBaseDirectory, overideSqlFileDirectory);
+                                    String theLost = mrApplicationShell.getConnectionLostReason();
+                                    if (theLost != null) {
+                                        // Exit non-zero: the tree is incomplete, and exiting 0 left
+                                        // only a file-count floor to notice -- after tens of minutes.
+                                        mrApplicationShell.error("GENERATION INCOMPLETE: the database connection was"
+                                                + " lost (" + theLost + "). Re-run when the database is answering.");
+                                        connectionLost = true;
+                                    }
                                     mrApplicationShell.info("Finished processing file " + args[i]);
                                 } else {
                                     mrApplicationShell.error("File " + args[i] + " exists but is not readable");
@@ -134,7 +145,7 @@ public class ProcBuilder {
             } //for
 
 
-            System.exit(0);
+            System.exit(connectionLost ? 3 : 0);
         } else {
             // complain if we have the wrong number of param files
 

@@ -2571,6 +2571,9 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
         }
 
         if (connectDB(ipField, portField, sidField, userField, passField)) {
+            // Generation from a file: a connection lost mid-run makes the output incomplete, so stop
+            // reconnecting and let the caller fail the run (ProcBuilder exits non-zero).
+            mrWrangler.setFailFastOnLostConnection(true);
             {
                 if (overideCodeBaseDirectory != null &&
                         overideCodeBaseDirectory.length() > 0) {
@@ -3570,6 +3573,11 @@ public class ApplicationShell implements LogInterface, TreeSelectionListener, Ta
         if (mrWrangler != null) {
             mrWrangler.disconnect();
         }
+    }
+
+    /** @return why the generator's connection was given up on during this run, or null */
+    public String getConnectionLostReason() {
+        return mrWrangler == null ? null : mrWrangler.getConnectionLostReason();
     }
 
 

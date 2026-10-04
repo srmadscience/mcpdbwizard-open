@@ -116,6 +116,16 @@ public class ConnectionWrangler {
      * @param pLog A Log object of some variety.
      * @see com.spookyaction.util.Log
      */
+    /**
+     * Package-private, and FOR TESTS ONLY: an instance that has not connected, which both public
+     * constructors always do. Lets the connection-state rules (fail-fast on a lost connection) be
+     * tested without a database.
+     */
+    ConnectionWrangler(LogInterface theLog, String theIpAddress) {
+        mrLog = theLog;
+        mrIpAddress = theIpAddress;
+    }
+
     public ConnectionWrangler(String pHostName
             , int pPort
             , String pSid
@@ -250,6 +260,31 @@ public class ConnectionWrangler {
      */
     public synchronized void connect() throws CSException {
 
+        if (failFastOnLostConnection) {
+            if (connectionLostReason != null) {
+                throw new CSException("Not reconnecting to '" + mrIpAddress + "': the connection was lost"
+                        + " earlier in this run (" + connectionLostReason + "). Stopping rather than"
+                        + " waiting out another read timeout.");
+            }
+            // A connection we still think we have, but which the DRIVER has closed, died under us --
+            // typically a read timeout on a host that stopped answering. The generator reconnects
+            // routinely (a dozen times for one large config), so without this every reconnect point
+            // waits out a fresh timeout, and one dead host costs tens of minutes before a run that
+            // then exits 0 with half a tree. Measured 2026-10-03 through a freezable proxy.
+            try {
+                if (haveConnection && mrConnection != null && mrConnection.isClosed()) {
+                    connectionLostReason = "the session was closed by the driver mid-run";
+                    haveConnection = false;
+                    mrConnection = null;
+                    throw new CSException("The connection to '" + mrIpAddress + "' was lost mid-run ("
+                            + connectionLostReason + "). Stopping rather than reconnecting.");
+                }
+            } catch (SQLException e) {
+                connectionLostReason = "the session could not be checked: " + e.getMessage();
+                throw new CSException("The connection to '" + mrIpAddress + "' was lost mid-run.");
+            }
+        }
+
         if (haveConnection) {
             this.disconnect();
         }
@@ -344,6 +379,13 @@ public class ConnectionWrangler {
         } catch (SQLException e) {
             String mrMessage = e.getMessage();
             mrLog.info(mrMessage);
+
+            // A reconnect that times out or loses the socket: the host has stopped answering. Record
+            // it, so the next attempt refuses at once instead of waiting another full timeout.
+            if (failFastOnLostConnection && (e.getErrorCode() == 17002 || e.getErrorCode() == 18730
+                    || e instanceof java.sql.SQLRecoverableException)) {
+                connectionLostReason = "reconnecting failed: " + mrMessage;
+            }
 
             // We get a specific error message when we try to connect to DB2 with an Oracle driver.
             if (mrMessage.indexOf(ORA_2_DB2_ERROR_MESSAGE) >= 0) {
@@ -480,6 +522,27 @@ public class ConnectionWrangler {
     /**
      * Disconnect from the DB
      */
+    /**
+     * Stop reconnecting once the connection has been lost. Off by default: the web console's Design
+     * session uses this class in-process and must be able to connect again after a database comes
+     * back. Batch generation turns it on (see ApplicationShell.generateCodeFromIniFile), where a lost
+     * connection means the run's output is already incomplete and the only useful thing left is to
+     * fail quickly and loudly.
+     */
+    private boolean failFastOnLostConnection = false;
+
+    /** Why the connection was given up on, or null. Only ever set in fail-fast mode. */
+    private String connectionLostReason = null;
+
+    public synchronized void setFailFastOnLostConnection(boolean theFlag) {
+        this.failFastOnLostConnection = theFlag;
+    }
+
+    /** @return why this run's connection was given up on, or null if it never was */
+    public synchronized String getConnectionLostReason() {
+        return connectionLostReason;
+    }
+
     public synchronized void disconnect() {
         if (haveConnection) {
             try {

@@ -223,8 +223,8 @@ The values also go into the audit record (wanted anyway, and the cheapest proof 
    `Scripts/sync-mcpdemo.sh` now derives `Propfiles/mcpdemo_customer.pb2` the same way as
    `mcpdemo.pb2` (one function, both configs); the config joins the no-arg regen set; harness
    `THotelPortalMcp` (stdio as SUZY BISHOP, HTTP as `?CUSTOMER_NAME=M%20GUSTAVE`).
-   The hotel box `endowment` is NOT done: it is outside the estate, and needs `install.sql`,
-   `grant.sql MCPDEMO` and the new DDL as a demo step when it is next used.
+   The hotel box `endowment` (outside the estate) was set up as a demo step on 2026-10-03:
+   `install.sql`, `grant.sql MCPDEMO` and the new DDL, all clean.
 7. **Docs:** the §0.2 trust statement, the install script, ~~the VPD and SE2 recipes from §6~~ (no VPD, §0.7).
    **DONE 2026-10-02** (not deployed -- the site deploys only via `publish-site.sh`). New page
    `public_website/.../docs/one-customer-per-connection.md` (Curating, order 125): the trust
@@ -317,13 +317,11 @@ The values also go into the audit record (wanted anyway, and the cheapest proof 
   attempt at it exposed harnesses that ignored a serverClass() override.
 
 **Shipping**
-- **Not released.** No image carries any of this yet; GCP/AWS/Marketplace deployments get it at the
-  next `release.sh`. Release notes not written.
-- **Open-source export not run.** The docs page links to `db/mcp-context/` in mcpdbwizard-open,
-  which 404s until the next export.
-- **Docs not deployed** (`publish-site.sh`).
-- **The hotel box `endowment` is not set up:** needs `install.sql`, `grant.sql MCPDEMO` and the new
-  DDL as a demo step. Outside the estate.
+- ~~Not released / export not run / docs not deployed~~ -- RELEASED in **2.0.30** (2026-10-02):
+  images on GHCR and Docker Hub, the open-source export (with `db/mcp-context/`), the docs site, and
+  the GitHub Release, audited DONE. Deployments get it when they pull 2.0.30.
+- ~~The hotel demo box not set up~~ -- DONE 2026-10-03: `install.sql`, `grant.sql MCPDEMO` and the
+  CUSTOMER_PORTAL DDL, package VALID, the same four checks as on the estate boxes passed.
 
 **Product gaps noticed along the way, not fixed**
 - ~~Runtime page URL without the `?NAME=` placeholders~~ -- FIXED 2026-10-02: the endpoint shows

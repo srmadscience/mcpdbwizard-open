@@ -447,7 +447,9 @@ else
 # 2026-10-02 (stack-trace leak): 546 -> 549. THREE new files: McpErrorBodies and McpErrorBodyFilter
 # (pub), which turn the MCP SDK's transport error bodies -- a whole Java exception, stack trace and
 # all -- into plain JSON-RPC errors, and McpErrorBodiesTest.
-expect "copyright chain-of-title lines" 549 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-10-03: 549 -> 550. ONE new file, ConnectionWranglerFailFastTest -- the generator stops on a
+# lost connection instead of waiting out a read timeout at every reconnect and exiting 0.
+expect "copyright chain-of-title lines" 550 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
