@@ -227,7 +227,8 @@ The values also go into the audit record (wanted anyway, and the cheapest proof 
    `install.sql`, `grant.sql MCPDEMO` and the new DDL, all clean.
 7. **Docs:** the §0.2 trust statement, the install script, ~~the VPD and SE2 recipes from §6~~ (no VPD, §0.7).
    **DONE 2026-10-02** (not deployed -- the site deploys only via `publish-site.sh`). New page
-   `public_website/.../docs/one-customer-per-connection.md` (Curating, order 125): the trust
+   `public_website/.../docs/one-customer-per-connection.md` (Curating, order 125; renamed
+   `context-pinning.md`, "Context Pinning", on 2026-10-04): the trust
    statement, install/grant, declaring names, client URL incl. `${VAR}` and stdio, the rules table,
    start-up refusals, clear-first pooling, the PL/SQL pattern (refuse NULL, no customer argument,
    someone else's row answered as missing, no NVL), a VPD recipe (REMOVED 2026-10-02, §0.7) and a

@@ -273,7 +273,8 @@ because an exit reaches a stdio client (and `TMcpServerStartup`) only as an init
 the console's Start checks the package BEFORE generating (`RuntimeManager.contextPreflightProblem`);
 and Claude Code sends an unset `${VAR}` in a URL literally, braces and all. Tests: `McpContextParamsTest`,
 `McpContextLiveTest` (gated), `TMcpContext` and `THotelPortalMcp` (generated-server harnesses on
-`generic_test_ctx` and `mcpdemo_customer`). User docs: `one-customer-per-connection` on the site.
+`generic_test_ctx` and `mcpdemo_customer`). User docs: `context-pinning` on the site (the feature's public name since 2026-10-04; it was
+"One customer per connection", and the old URL redirects).
 
 **SDK transport errors leaked a Java stack trace (fixed 2026-10-02).** MCP Java SDK 2.0.0's
 `HttpServletStreamableServerTransportProvider.responseError` serialises the whole `McpError` exception
