@@ -254,6 +254,11 @@ Scripts/export/check-export-clean.sh
 
 It fails if a private hostname, a credential or a jar has crept into the tree.
 
+## Security
+
+Please report a suspected vulnerability privately, not in a public issue — see
+[`SECURITY.md`](SECURITY.md).
+
 ## Licence
 
 **Apache License 2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
