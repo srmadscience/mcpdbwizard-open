@@ -4,8 +4,9 @@
 
 **Please do not open a public issue for a suspected vulnerability.**
 
-Report it privately through GitHub instead: open the **Security** tab of this repository
-and choose **Report a vulnerability**. The report is visible only to you and the
+Report it privately through GitHub instead: open the **Security and quality** tab of this
+repository (labelled **Security** in older GitHub layouts) and choose **Report a
+vulnerability**. The report is visible only to you and the
 maintainers. We can discuss it there, fix it in a private fork, and publish an advisory
 (with a CVE where one is warranted) once a fixed release is available.
 
