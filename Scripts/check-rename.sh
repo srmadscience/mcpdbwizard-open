@@ -449,7 +449,13 @@ else
 # all -- into plain JSON-RPC errors, and McpErrorBodiesTest.
 # 2026-10-03: 549 -> 550. ONE new file, ConnectionWranglerFailFastTest -- the generator stops on a
 # lost connection instead of waiting out a read timeout at every reconnect and exiting 0.
-expect "copyright chain-of-title lines" 550 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-11-07: 550 -> 552. TWO new files, one notice each, both from the site's contact form
+# (e633391, 2026-11-02): the Cloudflare Worker (public_website/contact-worker/src/index.js) and the
+# Pages function (public_website/mcpdbwizard-site/functions/api/contact.js). Measured as a set
+# difference with git grep at f74e5d0 (550) and HEAD (552), not by arithmetic. Same lapse as the
+# entries above: the count did not move with the commit, and the 2.0.33 release's BUILD phase
+# caught it five days later. The many headers edited in between are net zero.
+expect "copyright chain-of-title lines" 552 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

@@ -281,7 +281,7 @@ The values also go into the audit record (wanted anyway, and the cheapest proof 
   and curated SQL. The VPD material in §6, §8 (phase 5), §9.4, §10.4 and §11 item 7 below is
   SUPERSEDED by this. Nothing in the product ever used VPD; it was only ever documentation.
 
-### 0.8 Skipped or still open (2026-10-02) -- read this before calling the feature finished
+### 0.8 Skipped or still open (2026-10-02, cloud deployments added 2026-11-07) -- read this before calling the feature finished
 
 **Clients (phase 5)**
 - **Cursor: NOT TESTED.** Not installed on the development machine.
@@ -323,6 +323,42 @@ The values also go into the audit record (wanted anyway, and the cheapest proof 
   the GitHub Release, audited DONE. Deployments get it when they pull 2.0.30.
 - ~~The hotel demo box not set up~~ -- DONE 2026-10-03: `install.sql`, `grant.sql MCPDEMO` and the
   CUSTOMER_PORTAL DDL, package VALID, the same four checks as on the estate boxes passed.
+
+**Cloud deployments (2026-11-07) -- the hotel demo IS the pinned one, on every platform (David)**
+- **The scripted demos used to deploy the STAFF config.** `deploy/aws/demo.sh` and
+  `deploy/gcp/e2e-test.sh` both started `mcpdemo` (no context), so "spin up the hotel demo" never
+  showed this feature. Since `17a334f` both deploy **`mcpdemo_customer`**; `demo.sh` pins
+  `SUZY BISHOP` by default, takes `--customer NAME`, and keeps the old config behind `--staff`.
+  Only one is started, because the free tier runs one server. `deploy/mcp-prompt.sh` gained
+  `--context NAME=VALUE`, percent-encoded onto the registered client URL.
+- **`demo.sh` defaulted to image 2.0.27, which PREDATES this feature (2.0.30)**, so the pinned
+  default would have been refused. Now 2.0.32, and `demo.sh` is in `bump-version.sh` and
+  `release.sh`'s staging list so it cannot lag again.
+- ~~SE2 install untested~~ -- **VERIFIED on RDS 19c SE2** as the master user (`CREATE ANY CONTEXT`
+  included): the AWS stack's loader installs `install.sql` and grants it (`e18a312`).
+- **AWS: VERIFIED LIVE 2026-11-07** -- image 2.0.32, bare `demo.sh`, in a scratch AWS account. 20-minute
+  build; Claude Code registered `.../mcpdemo_customer?CUSTOMER_NAME=SUZY%20BISHOP` and connected.
+  On one server: SUZY sees only her details and booking 10005, M GUSTAVE only his and 10000, no
+  `CUSTOMER_NAME` is refused naming it, an unknown customer gets ORA-20101. Torn down clean.
+- **GCP: VERIFIED LIVE 2026-11-07** -- `e2e-test.sh` in a scratch GCP project, ALL 7 PASSED. The
+  Oracle VM now installs the context as SYSTEM and grants it to MCPDEMO; the same four assertions
+  ran **before and after** the VM replacement, with password, config and API token surviving. The
+  checker was first proven able to FAIL, against a fake server that leaks another customer's rows.
+  Run 1 failed only "config did not survive the replace", from a single unchecked fetch seconds
+  after the cold start; run 2 passed it at once, and the check now retries and prints the page
+  (`f0a5a68`). Torn down clean.
+- **Found by the AWS run, fixed in `e2b1185`:** the Runtime page renders a context config's
+  endpoint WITH its placeholder, `.../mcpdemo_customer?CUSTOMER_NAME=&lt;value&gt;` (the fix listed
+  under product gaps below). `mcp-prompt.sh` scraped that whole string, so `--config` never matched
+  and `demo.sh` would have died at its last step; without `--config` it would have registered the
+  placeholder as the URL. **Anything that scrapes that page for an endpoint must cut the query.**
+- **The hotel box (`endowment`): VERIFIED 2026-11-07** through a local 2.0.32 console set to
+  auto-start `mcpdemo_customer` (RUN_ON_START), against the box's long-lived data rather than a
+  fresh load. `mcp-prompt.sh --context` registered the pinned URL (Claude Code: Connected) and the
+  same checker passed: SUZY sees her three bookings (10005, 10092, 10093) and nobody else's,
+  M GUSTAVE his two (10000, 10003), no `CUSTOMER_NAME` is refused naming it, an unknown customer
+  gets ORA-20101 ("not known to this hotel chain"). So every place the demo runs -- AWS, GCP and
+  the hotel box -- now runs the pinned configuration and has been checked doing so.
 
 **Product gaps noticed along the way, not fixed**
 - ~~Runtime page URL without the `?NAME=` placeholders~~ -- FIXED 2026-10-02: the endpoint shows
