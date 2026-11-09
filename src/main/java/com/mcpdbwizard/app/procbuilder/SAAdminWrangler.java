@@ -7932,6 +7932,23 @@ public class SAAdminWrangler extends SADbWrangler {
     }
 
     /**
+     * The default sequence description as the Java string literal's contents the tool line
+     * embeds.
+     *
+     * <p><b>The bug this fixes.</b> {@code oracleName} is not the name: {@code JavaUtils.getOracleName}
+     * returns it ALREADY escaped for Java source, so a name that needs quoting ({@code test seq 4})
+     * arrives as {@code \"test seq 4\"} with the backslashes in the string. Escaping that again
+     * produced a description whose text read {@code Get the next value of sequence \"test seq 4\"},
+     * backslashes and all, in front of the agent. Found by the first MariaDB end-to-end run
+     * (2026-11-08); it is the same here for any Oracle sequence whose name needs quoting. The
+     * escaping is undone first, so the literal is escaped exactly once.
+     */
+    static String mcpSequenceDescriptionLiteral(String theOracleName) {
+        String theName = theOracleName == null ? null : theOracleName.replace("\\\"", "\"");
+        return javaStringLiteral(mcpDefaultSequenceDescription(theName));
+    }
+
+    /**
      * The generated description for one of a table's key/index lookup tools.
      *
      * <p>Extracted from the emission site so it can be unit-tested: a table's lookup tools are the
@@ -8561,7 +8578,7 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("        .tool(Tool.builder()");
         mcpToolNameLine(theJavaCode, toolName, mcpQualifiedOracleName(theSequence), "sequence");
         mcpToolDescriptionLine(theJavaCode,
-                javaStringLiteral(mcpDefaultSequenceDescription(theSequence.oracleName)),
+                mcpSequenceDescriptionLiteral(theSequence.oracleName),
                 theSequence.mcpSoleDescription(),
                 "sequence", theSequence.mcpConfigId, SingleNamespaceObject.MCP_DESC_SOLE);
         theJavaCode.print("                .inputSchema(schemaMap(\"type\", \"object\", \"properties\", schemaMap(), \"additionalProperties\", Boolean.FALSE))");

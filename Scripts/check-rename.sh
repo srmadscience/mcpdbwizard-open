@@ -455,7 +455,9 @@ else
 # difference with git grep at f74e5d0 (550) and HEAD (552), not by arithmetic. Same lapse as the
 # entries above: the count did not move with the commit, and the 2.0.33 release's BUILD phase
 # caught it five days later. The many headers edited in between are net zero.
-expect "copyright chain-of-title lines" 552 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-11-08: 552 -> 553. ONE new file, SequenceDescriptionLiteralTest (the sequence tool's
+#   description double-escaped a name that needs quoting; found by the MariaDB end-to-end run).
+expect "copyright chain-of-title lines" 553 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
