@@ -264,6 +264,7 @@ public class TableTableDataModel extends RowSetTableModel {
                 }
 
                 missingCount = 0;
+                boolean found = false;
 
                 // Go through result set looking for this table. When found set
                 // the flag.
@@ -277,11 +278,19 @@ public class TableTableDataModel extends RowSetTableModel {
                                 && theRowSet.getString(OBJECT_NAME_COLUMN)
                                 .equals(tempSeqName)) {
                             theRowSet.setString(SELECTED, "Yes");
+                            found = true;
                             break;
                         }
                     } catch (CSException e) {
                     }
 
+                }
+                // A selected object the list does not have used to vanish without a word: in a
+                // batch build it is simply not generated. Say so, naming it.
+                if (!found && theLog != null) {
+                    theLog.warning("The config selects table " + tempUserName + "." + tempSeqName
+                            + ", which is not among the tables and views this login can see, so it is not generated."
+                            + " Check that it still exists and that its owner is within the config's users.");
                 }
             } else {
                 missingCount++;

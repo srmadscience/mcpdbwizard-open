@@ -76,4 +76,36 @@ class ConnectionWranglerFailFastTest {
         assertNull(w.getConnectionLostReason());
         assertTrue(!theFailure.getMessage().contains("lost mid-run"), theFailure.getMessage());
     }
+
+    /**
+     * The path the check in connect() cannot see: the driver closes the connection mid-query (a read
+     * timeout, ORA-17008), the generator stops on the null result without ever reconnecting, and the
+     * run exited 0 with nothing generated (ORCL12 connector_jsonrpc, 2026-11-11). Asking for the reason
+     * after the run must now report it, so ProcBuilder exits 3.
+     */
+    @Test
+    void aConnectionClosedWithNoReconnectIsStillReported() throws Exception {
+        ConnectionWrangler w = wranglerWithDeadConnection(true);
+        assertNotNull(w.getConnectionLostReason(), "no connect() was attempted, and the loss is still found");
+        assertTrue(w.getConnectionLostReason().contains("closed by the driver"), w.getConnectionLostReason());
+    }
+
+    @Test
+    void withoutFailFastAClosedConnectionIsNotReported() throws Exception {
+        assertNull(wranglerWithDeadConnection(false).getConnectionLostReason());
+    }
+
+    /** A connection the driver still has open is never reported, so a healthy run exits 0. */
+    @Test
+    void anOpenConnectionIsNotReported() throws Exception {
+        ConnectionWrangler w = wranglerWithDeadConnection(true);
+        w.mrConnection = (Connection) Proxy.newProxyInstance(Connection.class.getClassLoader(),
+                new Class<?>[] {Connection.class}, (theProxy, theMethod, theArgs) -> {
+                    if (theMethod.getName().equals("isClosed")) {
+                        return Boolean.FALSE;
+                    }
+                    throw new UnsupportedOperationException(theMethod.getName());
+                });
+        assertNull(w.getConnectionLostReason());
+    }
 }

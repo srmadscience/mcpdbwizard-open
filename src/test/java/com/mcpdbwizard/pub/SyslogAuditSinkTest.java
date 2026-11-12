@@ -46,7 +46,7 @@ class SyslogAuditSinkTest {
         volatile Socket accepted;
 
         Collector(int theExpected) throws Exception {
-            this(new ServerSocket(0), theExpected);
+            this(new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress()), theExpected);
         }
 
         /** On an already-bound socket, so the restart case can reclaim the same port. */
@@ -154,7 +154,7 @@ class SyslogAuditSinkTest {
             assertTrue(theFirst.latch.await(5, TimeUnit.SECONDS));
         }
         // The collector has gone. The next write finds a broken pipe and must reconnect.
-        try (ServerSocket theSecond = new ServerSocket(thePort)) {
+        try (ServerSocket theSecond = new ServerSocket(thePort, 1, java.net.InetAddress.getLoopbackAddress())) {
             Collector theRestarted = new Collector(theSecond, 1);
             theSink.record(event("after"));
             assertTrue(theRestarted.latch.await(5, TimeUnit.SECONDS),
@@ -198,7 +198,7 @@ class SyslogAuditSinkTest {
     }
 
     private static int unusedPort() throws Exception {
-        try (ServerSocket theSocket = new ServerSocket(0)) {
+        try (ServerSocket theSocket = new ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
             return theSocket.getLocalPort();
         }
     }

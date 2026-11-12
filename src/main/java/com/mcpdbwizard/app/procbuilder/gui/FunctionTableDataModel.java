@@ -336,6 +336,7 @@ public class FunctionTableDataModel extends RowSetTableModel {
                 }
 
                 missingCount = 0;
+                boolean found = false;
 
                 // Go through result set looking for this function. When found
                 // set the flag.
@@ -353,11 +354,21 @@ public class FunctionTableDataModel extends RowSetTableModel {
                                 && ("" + theRowSet.getString(OVERLOAD))
                                 .equals("" + tempOverload)) {
                             theRowSet.setString(SELECTED, "Yes");
+                            found = true;
                             break;
                         }
                     } catch (CSException e) {
                     }
 
+                }
+                // A selected object the list does not have used to vanish without a word: in a
+                // batch build it is simply not generated. Say so, naming it.
+                if (!found && theLog != null) {
+                    theLog.warning("The config selects routine " + tempUserName + "."
+                            + (tempPackName == null || tempPackName.equals("null") ? "" : tempPackName + ".") + tempSeqName
+                            + (tempOverload == null || tempOverload.equals("null") ? "" : " (overload " + tempOverload + ")")
+                            + ", which is not among the routines this login can see, so it is not generated."
+                            + " Check that it still exists, that its owner is within the config's users, and its overload number.");
                 }
             } else {
                 missingCount++;

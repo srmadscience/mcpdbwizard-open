@@ -2261,6 +2261,50 @@ public class CallableStatementParameterEngine {
         theJavaChunk.unIndent();
     }
 
+    /**
+     * The JSON key the MCP server's {@code RECORD_MAPPER} gives each field {@link #addVariables}
+     * declares, keyed by the Java field name, for a record, object or statement-row class: the
+     * Oracle name lower-cased, as routine parameters and table rows already cross, where the Java
+     * name is {@code param<Field>}. Only names that differ are returned. Empty when two fields would
+     * share a key (quoted names differing only in case), so the class keeps its Java names rather
+     * than crossing ambiguously.
+     */
+    public java.util.Map<String, String> getJsonFieldNames() {
+        java.util.Map<String, String> out = new java.util.LinkedHashMap<String, String>();
+        if (theRowSet == null || variableName == null || useVariable == null) {
+            return out;
+        }
+        java.util.Set<String> keys = new java.util.HashSet<String>();
+        java.util.Set<String> javaNames = new java.util.HashSet<String>();
+        try {
+            for (int i = 0; i < theRowSet.size() && i < variableName.length; i++) {
+                theRowSet.setCurrentRowNumber(i);
+                if (!useVariable[i] || variableName[i] == null) {
+                    continue;
+                }
+                javaNames.add(variableName[i]);
+                String name = theRowSet.getInt("POSITION") == 0 ? null : theRowSet.getString("ARGUMENT_NAME");
+                String key = name == null || name.trim().isEmpty() ? variableName[i] : name.toLowerCase(java.util.Locale.ROOT);
+                if (!keys.add(key)) {
+                    return new java.util.LinkedHashMap<String, String>();
+                }
+                if (!key.equals(variableName[i])) {
+                    out.put(variableName[i], key);
+                }
+            }
+        } catch (Exception e) {
+            theLog.warning("JSON field names not derived; the record keeps its Java names: " + e.getMessage());
+            return new java.util.LinkedHashMap<String, String>();
+        }
+        for (String key : out.values()) {
+            // A key equal to a field that keeps its own Java name would collide with it.
+            if (javaNames.contains(key) && !out.containsKey(key)) {
+                return new java.util.LinkedHashMap<String, String>();
+            }
+        }
+        return out;
+    }
+
     void addVariables(JavaChunk theJavaChunk
             , JavaChunk theJavaAttrsChunk
             , boolean comments

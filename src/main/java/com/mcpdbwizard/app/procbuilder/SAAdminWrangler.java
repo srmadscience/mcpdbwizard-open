@@ -264,6 +264,24 @@ public class SAAdminWrangler extends SADbWrangler {
 
     ExtraTypeWrangler theXWrangler = null;
 
+    /**
+     * The JSON key of each generated record, object or statement-row field whose Java name is not
+     * the database's name, keyed {@code <binary class name>#<java field>}: what the emitted MCP
+     * server's {@code RECORD_MAPPER} publishes and binds instead of the Java name (open-source
+     * issue #2, known issue 3). Filled as those classes are emitted, which is before the MCP server
+     * is, and cleared when a generation starts. Nothing is emitted for it while it is empty.
+     */
+    final java.util.Map<String, String> mcpJsonFieldNames = new java.util.LinkedHashMap<String, String>();
+
+    /** Records {@code theEngine}'s field keys against each of {@code theClassNames}, which declare its fields. */
+    private void noteMcpJsonFieldNames(CallableStatementParameterEngine theEngine, String... theClassNames) {
+        for (java.util.Map.Entry<String, String> e : theEngine.getJsonFieldNames().entrySet()) {
+            for (String theClassName : theClassNames) {
+                mcpJsonFieldNames.put(theClassName + "#" + e.getKey(), e.getValue());
+            }
+        }
+    }
+
 
     public SAAdminWrangler
             (String pDriver
@@ -1530,6 +1548,7 @@ public class SAAdminWrangler extends SADbWrangler {
                                   String xwsImpl,
                                   String xwsIface) {
         boolean returnCode = false;
+        mcpJsonFieldNames.clear();
         // Seed the effective temp-file prefix/suffix from the propfile, falling back to the
         // shared sane defaults ("ob" / ".tmp") so generated callable-statement wrappers never
         // emit the raw PARAM_TEMP_FILE_* template tokens as runtime filenames.
@@ -4796,6 +4815,7 @@ public class SAAdminWrangler extends SADbWrangler {
         this.mcpPooled = poolSettings.isEnabled();
         this.mcpPrometheus = prometheusServerFlag;
         this.mcpMetricDescriptions = new java.util.ArrayList();
+        this.mcpEmittedToolNames = new java.util.LinkedHashMap<>();
         // req is the CallToolRequest already in scope at every registration site, so passing it
         // costs nothing there and gives call(...) the tool name for its record.
         this.mcpCallOpen = mcpPooled ? "call(exchange, req, theFactory ->" : "call(exchange, req, () ->";
@@ -5250,7 +5270,39 @@ public class SAAdminWrangler extends SADbWrangler {
         // generated class declares. This is what makes a DATE inside a RECORD cross exactly as a
         // DATE parameter of its own does; they were four different behaviours until 2.0.17.
         theJavaCode.print("        .addModule(new com.mcpdbwizard.pub.McpDateModule())");
+        // Records, objects and statement rows cross under the DATABASE'S names (open-source issue
+        // #2, known issue 3), not the Java names the generator had to give their fields: an Oracle
+        // record field CITY was "paramCity", and a MariaDB column `a b` was "a_b". A naming
+        // strategy rather than annotations, for the reason the mixin below gives; and on this
+        // mapper, so the schema recordSchemaProperties publishes and the binding still come from
+        // one place. Emitted only when some name differs.
+        if (!mcpJsonFieldNames.isEmpty()) {
+            theJavaCode.print("        .propertyNamingStrategy(new McpFieldNames())");
+        }
         theJavaCode.print("        .build();");
+        if (!mcpJsonFieldNames.isEmpty()) {
+            if (comments) {
+                theJavaCode.print("// The database's name for each generated field whose Java name differs from it,");
+                theJavaCode.print("// keyed class#field. Records and rows cross under these names, both ways.");
+            }
+            theJavaCode.print("private static final class McpFieldNames extends tools.jackson.databind.PropertyNamingStrategy");
+            theJavaCode.print("{");
+            theJavaCode.print("  private static final java.util.Map<String, String> NAMES = new java.util.HashMap<String, String>();");
+            theJavaCode.print("  static");
+            theJavaCode.print("  {");
+            for (java.util.Map.Entry<String, String> e : mcpJsonFieldNames.entrySet()) {
+                theJavaCode.print("    NAMES.put(" + quotedJavaString(e.getKey()) + ", " + quotedJavaString(e.getValue()) + ");");
+            }
+            theJavaCode.print("  }");
+            theJavaCode.print("  @Override");
+            theJavaCode.print("  public String nameForField(tools.jackson.databind.cfg.MapperConfig<?> theConfig,");
+            theJavaCode.print("      tools.jackson.databind.introspect.AnnotatedField theField, String theDefault)");
+            theJavaCode.print("  {");
+            theJavaCode.print("    String theName = NAMES.get(theField.getDeclaringClass().getName() + \"#\" + theDefault);");
+            theJavaCode.print("    return theName == null ? theDefault : theName;");
+            theJavaCode.print("  }");
+            theJavaCode.print("}");
+        }
         if (comments) {
             theJavaCode.print("// Suppresses the generated record classes' own plumbing from JSON, BY NAME.");
             theJavaCode.print("//");
@@ -5718,6 +5770,7 @@ public class SAAdminWrangler extends SADbWrangler {
         }
         theJavaCode.print("  McpServer.sync(theProvider)");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
+        theJavaCode.print("      .jsonSchemaValidator(toolSchemaValidator())");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
         // tools(false) IS listChanged=false -- the boolean is the notification flag, not a switch
         // for the tools capability itself (McpSchema.ServerCapabilities.ToolCapabilities is a record
@@ -5924,6 +5977,7 @@ public class SAAdminWrangler extends SADbWrangler {
         }
         theJavaCode.print("  McpServer.sync(new StdioServerTransportProvider(theMapper))");
         theJavaCode.print("      .serverInfo(\"" + serverInfoName + "\", \"1.0.0\")");
+        theJavaCode.print("      .jsonSchemaValidator(toolSchemaValidator())");
         theJavaCode.print("      .instructions(\"" + instructionsText + "\")");
         // listChanged=false, for the reasons set out at the HTTP transport's capabilities call above.
         theJavaCode.print("      .capabilities(ServerCapabilities.builder().tools(false).logging().build())");
@@ -6668,7 +6722,65 @@ public class SAAdminWrangler extends SADbWrangler {
      * <p>The cost, stated because it is real: the field list no longer appears in this generated
      * source. It exists once the server starts. That is traded for the guarantee above.
      */
+    /**
+     * Emits {@code toolSchemaValidator()}, the input-schema validator every generated server passes
+     * to the SDK in place of its default.
+     *
+     * <p><b>The SDK's default caches each compiled schema under {@code Map.hashCode()} of the schema
+     * (when it has no {@code $id}), and map hash codes collide.</b> Found 2026-11-11 by the MariaDB
+     * fork's native-types test: two tools with one parameter each, the same sub-schema and names
+     * {@code a} and {@code q}, hashed alike, so whichever was validated first had its schema used for
+     * the other, and every call to the second was refused ("required property 'a' not found"). Which
+     * tool wins depends on call order, and the failure can as well be an invalid call let through.
+     * {@code DefaultJsonSchemaValidator.generateCacheKey} is protected, so the key here is the
+     * schema's whole text: two keys are equal only when the schemas are. Nothing a client sees
+     * changes, unlike adding an {@code $id} to every published schema.
+     */
+    private static void addMcpToolSchemaValidator(JavaChunk theJavaCode, boolean comments) {
+        theJavaCode.print("");
+        if (comments) {
+            theJavaCode.print("// The SDK's validator caches each tool's compiled input schema under the schema's");
+            theJavaCode.print("// Map.hashCode(), and two different schemas can hash alike: one tool's calls were then");
+            theJavaCode.print("// validated against another tool's schema. Keyed by the schema's text instead.");
+        }
+        theJavaCode.print("private static io.modelcontextprotocol.json.schema.JsonSchemaValidator toolSchemaValidator()");
+        theJavaCode.indent();
+        theJavaCode.print("{");
+        theJavaCode.print("return new io.modelcontextprotocol.json.schema.jackson3.DefaultJsonSchemaValidator()");
+        theJavaCode.print("  {");
+        theJavaCode.print("  @Override");
+        theJavaCode.print("  protected String generateCacheKey(java.util.Map<String, Object> theSchema)");
+        theJavaCode.print("    {");
+        theJavaCode.print("    return String.valueOf(theSchema);");
+        theJavaCode.print("    }");
+        theJavaCode.print("  };");
+        theJavaCode.print("}");
+        theJavaCode.unIndent();
+    }
+
+    /**
+     * {@code s} as a quoted Java string literal, with anything outside printable ASCII escaped: a
+     * control character in octal, since a backslash-u escape of one is decoded before the source is
+     * read and would end the literal.
+     */
+    static String quotedJavaString(String s) {
+        StringBuilder b = new StringBuilder("\"");
+        for (char c : s.toCharArray()) {
+            if (c == '"' || c == '\\') {
+                b.append('\\').append(c);
+            } else if (c < 0x20) {
+                b.append(String.format("\\%03o", (int) c));
+            } else if (c > 0x7e) {
+                b.append(String.format("\\u%04x", (int) c));
+            } else {
+                b.append(c);
+            }
+        }
+        return b.append('"').toString();
+    }
+
     private void addMcpRecordSchemaHelpers(JavaChunk theJavaCode, boolean comments) {
+        addMcpToolSchemaValidator(theJavaCode, comments);
         theJavaCode.print("");
         if (comments) {
             theJavaCode.print("// The JSON-schema properties of a generated record class, read through RECORD_MAPPER");
@@ -6697,9 +6809,19 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("            String theJsonType = recordFieldJsonType(theFieldType);");
         theJavaCode.print("            if (theJsonType == null) { return; }");
         theJavaCode.print("            String theNote = recordFieldCrossingNote(theFieldType);");
-        theJavaCode.print("            theProperties.put(theProperty.getName(), theNote == null");
-        theJavaCode.print("                ? schemaMap(\"type\", theJsonType)");
-        theJavaCode.print("                : schemaMap(\"type\", theJsonType, \"description\", theNote));");
+        if (comments) {
+            theJavaCode.print("            // A dense VECTOR field (double[]) is an array of numbers, as a VECTOR parameter is.");
+        }
+        theJavaCode.print("            Object[] theSchema = \"array\".equals(theJsonType)");
+        theJavaCode.print("                ? new Object[] {\"type\", \"array\", \"items\", schemaMap(\"type\", \"number\")}");
+        theJavaCode.print("                : new Object[] {\"type\", theJsonType};");
+        theJavaCode.print("            if (theNote != null)");
+        theJavaCode.print("              {");
+        theJavaCode.print("              theSchema = java.util.Arrays.copyOf(theSchema, theSchema.length + 2);");
+        theJavaCode.print("              theSchema[theSchema.length - 2] = \"description\";");
+        theJavaCode.print("              theSchema[theSchema.length - 1] = theNote;");
+        theJavaCode.print("              }");
+        theJavaCode.print("            theProperties.put(theProperty.getName(), schemaMap(theSchema));");
         theJavaCode.print("            }");
         theJavaCode.print("          };");
         theJavaCode.print("        }");
@@ -6729,6 +6851,7 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.print("if (Number.class.isAssignableFrom(theType) || theType.isPrimitive()) { return \"number\"; }");
         theJavaCode.print("if (java.util.Date.class.isAssignableFrom(theType)) { return \"string\"; }");
         theJavaCode.print("if (theType == byte[].class) { return \"string\"; }");
+        theJavaCode.print("if (theType == double[].class) { return \"array\"; }");
         theJavaCode.print("return null;");
         theJavaCode.print("}");
         theJavaCode.unIndent();
@@ -7517,6 +7640,12 @@ public class SAAdminWrangler extends SADbWrangler {
      */
     private void mcpToolNameLine(JavaChunk theJavaCode, String theToolName, String theDbObject,
                                  String theObjectType) {
+        String theWanted = theToolName;
+        theToolName = mcpUniqueToolName(mcpEmittedToolNames, theWanted, theDbObject);
+        if (!theToolName.equals(theWanted)) {
+            mrLog.warning("MCP: tool name " + theWanted + " is already taken by " + mcpEmittedToolNames.get(theWanted)
+                    + ", so " + theDbObject + " is " + theToolName);
+        }
         theJavaCode.print("                .name(\"" + theToolName + "\")");
         // Held for the .description(...) line that follows, which records the config entry this
         // tool was described by; see mcpPendingToolName for why it is carried rather than passed.
@@ -7525,6 +7654,33 @@ public class SAAdminWrangler extends SADbWrangler {
             mcpMetricDescriptions.add(new String[] {theToolName,
                     theDbObject == null ? "" : theDbObject, theObjectType});
         }
+    }
+
+    /** Every tool name emitted into the current server, with the object it reaches. */
+    private java.util.Map<String, String> mcpEmittedToolNames = new java.util.LinkedHashMap<>();
+
+    /**
+     * {@code theToolName}, or, when an earlier tool in the same server already has it, that name
+     * with the first free suffix {@code _2}, {@code _3} ...; records the result in {@code theUsed}.
+     *
+     * <p>Two tools of one name are not a compile error: the server builds and then dies at START-UP
+     * with "Tool with name '...' is already registered", taking every other tool with it. Names
+     * meet more easily than they look, because a name is the object's display name with every
+     * non-alphanumeric character an underscore: a standalone {@code PKG_MEMBER} and package
+     * {@code PKG}'s member {@code MEMBER} are both {@code pkg_member}, as are table {@code A_B}'s
+     * {@code a_b_get_by_pk} and a lookup on table {@code A} named {@code b_get_by_pk}. Found
+     * 2026-11-09 by the MariaDB port, whose corpus has both forms of 104 routines.
+     *
+     * <p>The first tool keeps its name, so every name that already worked is unchanged; only a name
+     * that could never have started is suffixed. The generator logs which object took which name.
+     */
+    static String mcpUniqueToolName(java.util.Map<String, String> theUsed, String theToolName, String theDbObject) {
+        String theName = theToolName;
+        for (int i = 2; theUsed.containsKey(theName); i++) {
+            theName = theToolName + "_" + i;
+        }
+        theUsed.put(theName, theDbObject == null ? "" : theDbObject);
+        return theName;
     }
 
     /**
@@ -7906,6 +8062,9 @@ public class SAAdminWrangler extends SADbWrangler {
                 return "date, ISO-8601, e.g. 1990-01-01 or 1990-01-01T09:30:00Z";
             case "byte[]":
                 return "binary, base64";
+            case "double[]":
+                // A dense VECTOR: the schema says array, the label says what of.
+                return "vector, an array of numbers";
             case "double":
             case "float":
             case "int":
@@ -19175,14 +19334,19 @@ public class SAAdminWrangler extends SADbWrangler {
                     && aspStatementErrors[seq].length() == 0
                     && aspStatementWranglerArray[seq].getCreateJava()) {
                 try {
-                    if (aspStatementWranglerArray[seq].webserviceInterfaceCode.exists()) {
+                    // Null-checked as the routines' loop above is: a statement another product
+                    // generates (Postgres, MariaDB) writes no SOAP code, and an unchecked null here
+                    // escaped the loop and lost every later statement's and table's service code.
+                    if (aspStatementWranglerArray[seq].webserviceInterfaceCode != null
+                            && aspStatementWranglerArray[seq].webserviceInterfaceCode.exists()) {
                         methList.add(aspStatementWranglerArray[seq].theMetaData);
 
                         interfaceJavaCode.addFile(aspStatementWranglerArray[seq].webserviceInterfaceCode);
                         aspStatementWranglerArray[seq].webserviceInterfaceCode.delete();
                     }
 
-                    if (aspStatementWranglerArray[seq].webserviceMethodCode.exists()) {
+                    if (aspStatementWranglerArray[seq].webserviceMethodCode != null
+                            && aspStatementWranglerArray[seq].webserviceMethodCode.exists()) {
                         serviceJavaCode.addFile(aspStatementWranglerArray[seq].webserviceMethodCode);
                         aspStatementWranglerArray[seq].webserviceMethodCode.delete();
                     }
@@ -19564,6 +19728,13 @@ public class SAAdminWrangler extends SADbWrangler {
                 mrLog.info("Creating post generation batch file " + postScriptFile.getAbsolutePath());
                 String[] pointlessArray = postscriptContent.split(REGEX_LINESPLIT);
                 writeFile(postScriptFile, pointlessArray);
+                // RunBatchFile runs it as a command (sh -c <path>), which needs the execute bit; a
+                // file written with default permissions failed with "Permission denied", rc 126, on
+                // every Unix run (generic_testg/h on all six boxes), logged and never noticed.
+                if (System.getProperty("os.name", "").toUpperCase().indexOf("WINDOWS") < 0
+                        && !postScriptFile.setExecutable(true)) {
+                    mrLog.warning("Could not make " + postScriptFile.getAbsolutePath() + " executable; it will not run");
+                }
             }
         }
 
@@ -22709,6 +22880,9 @@ public class SAAdminWrangler extends SADbWrangler {
                             theJavaAttrsCode.indent();
 
                             theExtraObjects[seq].theEngine.addVariables(theJavaCode, theJavaAttrsCode, comments, true, webServicesFlag, webServiceRecType);
+                            noteMcpJsonFieldNames(theExtraObjects[seq].theEngine
+                                    , packageName + ".plsql." + theExtraObjects[seq].javaAttrName
+                                    , packageName + ".plsql." + theExtraObjects[seq].fixedJavaName);
                             theJavaAttrsCode.print(" ");
 
                             //      theJavaCode.print(" ");
@@ -23939,6 +24113,9 @@ public class SAAdminWrangler extends SADbWrangler {
                                     , comments
                                     , true
                                     , webServicesFlag, webServiceRecType);
+                            noteMcpJsonFieldNames(aspStatementWranglerArray[seq].qryCse
+                                    , packageName + "." + packageSubName + "." + aspStatementWranglerArray[seq].cursorAttrFileName
+                                    , packageName + "." + packageSubName + "." + aspStatementWranglerArray[seq].cursorMethodFileName);
 
                             //aspStatementWranglerArray[seq].qryCse.addGetMethods(webServiceRecType, cursorMethodChunk, cursorMethodChunk, comments);
                             aspStatementWranglerArray[seq].qryCse.addGetMethods(webServiceRecType, cursorMethodChunk, cursorAttrChunk, comments); //DRKLUGE

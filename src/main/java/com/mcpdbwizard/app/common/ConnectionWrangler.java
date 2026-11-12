@@ -365,6 +365,27 @@ public class ConnectionWrangler {
                     mrLog.info("Could not disable parallel query: " + e2.getMessage());
                 }
 
+                // 12.1 multitenant only: the session switch above does NOT stop every parallel
+                // server. In a PDB, ALL_SYNONYMS and ALL_OBJECTS also read the root's common objects
+                // through X$COMVW$, and 12.1 scans those in parallel whatever the session says -- a
+                // NO_PARALLEL hint does not stop it either. Measured on ORCL12 2026-11-11: 10 slave
+                // executions per run of the routine-list query; with this parameter off, none. Those
+                // slaves are what intermittently stalled a dictionary query until the 600s read
+                // timeout (yesterday's ORA-17008s, today's connector_jsonrpc). 12.2 reworked
+                // container queries, so later versions are left alone. An underscore parameter, set
+                // for this session only, on the generator's own read-only dictionary connection; a
+                // failure (a non-CDB, a revoked privilege) is logged and ignored.
+                try {
+                    java.sql.DatabaseMetaData md = mrConnection.getMetaData();
+                    if (md.getDatabaseMajorVersion() == 12 && md.getDatabaseMinorVersion() == 1) {
+                        try (java.sql.Statement s = mrConnection.createStatement()) {
+                            s.execute("ALTER SESSION SET \"_px_cdb_view_enabled\" = FALSE");
+                        }
+                    }
+                } catch (SQLException e2) {
+                    mrLog.info("Could not turn off parallel container views: " + e2.getMessage());
+                }
+
                 // Name the session so a DBA watching V$SESSION can tell the generator's dictionary
                 // reads from whatever else is using the same account. Purely diagnostic, so a
                 // failure is logged and ignored rather than allowed to fail the connection.
@@ -538,8 +559,24 @@ public class ConnectionWrangler {
         this.failFastOnLostConnection = theFlag;
     }
 
-    /** @return why this run's connection was given up on, or null if it never was */
+    /**
+     * @return why this run's connection was given up on, or null if it never was. In fail-fast mode
+     * this also catches a connection the DRIVER closed that nothing tried to reconnect: a read
+     * timeout mid-query (ORA-17008) after which the generator stopped on a null result rather than
+     * reconnecting. The check above sits in connect(), so that run exited 0 with nothing generated
+     * (ORCL12 connector_jsonrpc, 2026-11-11). A run that ended normally has disconnected, which
+     * clears haveConnection, so it cannot trip this.
+     */
     public synchronized String getConnectionLostReason() {
+        if (failFastOnLostConnection && connectionLostReason == null && haveConnection && mrConnection != null) {
+            try {
+                if (mrConnection.isClosed()) {
+                    connectionLostReason = "the session was closed by the driver mid-run";
+                }
+            } catch (SQLException e) {
+                connectionLostReason = "the session could not be checked: " + e.getMessage();
+            }
+        }
         return connectionLostReason;
     }
 
