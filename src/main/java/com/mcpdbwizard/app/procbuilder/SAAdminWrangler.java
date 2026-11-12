@@ -670,18 +670,11 @@ public class SAAdminWrangler extends SADbWrangler {
         try {
             // allIndices=true so indexes are listed as well as constraints, matching the generator's
             // own call; it binds the owner/name three times over for the union arms.
-            QueryStatement theConstraints = new QueryStatement(
-                    SqlStatementDictionary.getAllConstraintsQuery3(getVersion(), true), mrLog, mrConnection);
-            theConstraints.setParam(1, theOwner);
-            theConstraints.setParam(2, theName);
-            theConstraints.setParam(3, theOwner);
-            theConstraints.setParam(4, theName);
-            theConstraints.setParam(5, theOwner);
-            theConstraints.setParam(6, theName);
-            ReadOnlyRowSet theRows = theConstraints.execute();
-
-            QueryStatement theChildren = new QueryStatement(
-                    SqlStatementDictionary.getAllChildConstraintsQuery(getVersion()), mrLog, mrConnection);
+            // Through the cursor guard, which these per-table queries bypassed (2.0.37).
+            String what = "table " + theOwner + "." + theName;
+            ReadOnlyRowSet theRows = cursorGuard().query(what + ": its constraints and indexes",
+                    SqlStatementDictionary.getAllConstraintsQuery3(getVersion(), true),
+                    theOwner, theName, theOwner, theName, theOwner, theName);
 
             for (int seq = 0; seq < theRows.size(); seq++) {
                 theRows.setCurrentRowNumber(seq);
@@ -697,9 +690,10 @@ public class SAAdminWrangler extends SADbWrangler {
                 // Children hang off THIS table's P or U constraints, which is how the generator
                 // walks to them: a child's R constraint references one of ours by name.
                 if ("P".equals(theType) || "U".equals(theType)) {
-                    theChildren.setParam(1, theRows.getString("OWNER"));
-                    theChildren.setParam(2, theConstraintName);
-                    ReadOnlyRowSet theChildRows = theChildren.execute();
+                    ReadOnlyRowSet theChildRows = cursorGuard().query(
+                            what + ": the children of " + theConstraintName,
+                            SqlStatementDictionary.getAllChildConstraintsQuery(getVersion()),
+                            theRows.getString("OWNER"), theConstraintName);
                     for (int kid = 0; kid < theChildRows.size(); kid++) {
                         theChildRows.setCurrentRowNumber(kid);
                         String theChildConstraint = theChildRows.getString("CONSTRAINT_NAME");
@@ -748,11 +742,8 @@ public class SAAdminWrangler extends SADbWrangler {
             return theOperations;
         }
         try {
-            QueryStatement theQuery = new QueryStatement(
-                    SqlStatementDictionary.getJsonDualityViewQry(), mrLog, mrConnection);
-            theQuery.setParam(1, theOwner);
-            theQuery.setParam(2, theName);
-            ReadOnlyRowSet theRows = theQuery.execute();
+            ReadOnlyRowSet theRows = cursorGuard().query("view " + theOwner + "." + theName
+                    + ": whether it is a duality view", SqlStatementDictionary.getJsonDualityViewQry(), theOwner, theName);
             if (theRows.size() == 0) {
                 return theOperations;   // a perfectly ordinary table
             }
@@ -8835,10 +8826,11 @@ public class SAAdminWrangler extends SADbWrangler {
         }
 
         try {
-            QueryStatement pkQuery = new QueryStatement(SqlStatementDictionary.getPkColsQry(), mrLog, mrConnection);
-            pkQuery.setParam(1, owner);
-            pkQuery.setParam(2, name);
-            ReadOnlyRowSet pkRowSet = pkQuery.execute();
+            // Through the cursor guard: these four queries run once per table and held their cursor
+            // for the rest of the session, so a large config ran out (ORA-01000) part-way through.
+            String what = "table " + owner + "." + name;
+            ReadOnlyRowSet pkRowSet = cursorGuard().query(what + ": its primary key",
+                    SqlStatementDictionary.getPkColsQry(), owner, name);
             if (pkRowSet.size() == 0) {
                 mrLog.info("MCP: skipping table " + theTable.oracleName + " - it has no primary key,"
                         + " so there is no way to address a row. The table's DAO is still generated.");
@@ -8854,10 +8846,8 @@ public class SAAdminWrangler extends SADbWrangler {
 
             java.util.HashSet alwaysIdentityCols = new java.util.HashSet();
             if (isIdentityInfoAvailable()) {
-                QueryStatement identityQuery = new QueryStatement(SqlStatementDictionary.getTabIdentityColsQry(), mrLog, mrConnection);
-                identityQuery.setParam(1, owner);
-                identityQuery.setParam(2, name);
-                ReadOnlyRowSet identityRowSet = identityQuery.execute();
+                ReadOnlyRowSet identityRowSet = cursorGuard().query(what + ": its identity columns",
+                        SqlStatementDictionary.getTabIdentityColsQry(), owner, name);
                 for (int i = 0; i < identityRowSet.size(); i++) {
                     identityRowSet.setCurrentRowNumber(i);
                     if ("ALWAYS".equalsIgnoreCase(identityRowSet.getString("GENERATION_TYPE"))) {
@@ -8866,11 +8856,8 @@ public class SAAdminWrangler extends SADbWrangler {
                 }
             }
 
-            QueryStatement colQuery = new QueryStatement(
-                    SqlStatementDictionary.getAllTabColsQry(getVersion(), isVectorInfoAvailable()), mrLog, mrConnection);
-            colQuery.setParam(1, owner);
-            colQuery.setParam(2, name);
-            ReadOnlyRowSet colRowSet = colQuery.execute();
+            ReadOnlyRowSet colRowSet = cursorGuard().query(what + ": its columns",
+                    SqlStatementDictionary.getAllTabColsQry(getVersion(), isVectorInfoAvailable()), owner, name);
             if (colRowSet.size() == 0) {
                 mrLog.info("MCP: skipping table " + theTable.oracleName + " - no columns are readable"
                         + " for it, which usually means the connected user lacks rights on it");
@@ -8967,12 +8954,11 @@ public class SAAdminWrangler extends SADbWrangler {
                 }
                 for (int lk = 0; lk < theTable.mcpTableLookups.size(); lk++) {
                     TableMcpInfo.Lookup lookup = theTable.mcpTableLookups.get(lk);
-                    QueryStatement lookupColQuery = new QueryStatement(lookup.kind.equals("ix")
-                            ? SqlStatementDictionary.getIndexColsQry()
-                            : SqlStatementDictionary.getConstraintColsQry(), mrLog, mrConnection);
-                    lookupColQuery.setParam(1, lookup.constraintOwner);
-                    lookupColQuery.setParam(2, lookup.constraintName);
-                    ReadOnlyRowSet lookupColRowSet = lookupColQuery.execute();
+                    ReadOnlyRowSet lookupColRowSet = cursorGuard().query(
+                            what + ": the columns of " + lookup.constraintOwner + "." + lookup.constraintName,
+                            lookup.kind.equals("ix") ? SqlStatementDictionary.getIndexColsQry()
+                                    : SqlStatementDictionary.getConstraintColsQry(),
+                            lookup.constraintOwner, lookup.constraintName);
                     boolean allResolved = lookupColRowSet.size() > 0;
                     for (int lc = 0; lc < lookupColRowSet.size(); lc++) {
                         lookupColRowSet.setCurrentRowNumber(lc);
@@ -9002,7 +8988,16 @@ public class SAAdminWrangler extends SADbWrangler {
 
             return info;
         } catch (Exception e) {
-            mrLog.info("MCP: skipping table " + theTable.oracleName + " - metadata query failed: " + e.getMessage());
+            // Running out of cursors is not a fact about this table, and a table lost to it is a
+            // tool missing from a server that reports success: say so at error level. (The guard
+            // has already reconnected and retried once before this is reached.)
+            if (com.mcpdbwizard.app.common.MetadataCursorGuard.isCursorExhaustion(e)) {
+                mrLog.error("MCP: table " + theTable.oracleName + " is LEFT OUT of the MCP server: its"
+                        + " metadata could not be read after reconnecting for ORA-01000 (" + e.getMessage() + ")");
+            } else {
+                mrLog.info("MCP: skipping table " + theTable.oracleName + " - metadata query failed: " + e.getMessage());
+            }
+            mcpUnexposed("table", theTable.mcpConfigId, null, "its metadata query failed: " + e.getMessage());
             return null;
         }
     }
@@ -23149,6 +23144,7 @@ public class SAAdminWrangler extends SADbWrangler {
                 // MCP: capture the full top-level parameter list so the server emission can drive
                 // this wrapper directly and expose all OUT / IN OUT params (not just a single value).
                 try {
+                    theEngine.setCursorGuard(cursorGuard());
                     theFunctions[seq].mcpProcParams = theEngine.getMcpParamTuples();
                 } catch (Exception mcpParamException) {
                     theFunctions[seq].mcpProcParams = null;
@@ -26807,6 +26803,67 @@ public class SAAdminWrangler extends SADbWrangler {
         getVersion();
     }
 
+    /**
+     * Runs the per-object dictionary queries of the MCP passes and recovers from ORA-01000 (see
+     * {@link com.mcpdbwizard.app.common.MetadataCursorGuard}). One per wrangler, so the "close each
+     * statement from now on" flag, once set, holds for the rest of the run.
+     */
+    private com.mcpdbwizard.app.common.MetadataCursorGuard metadataCursorGuard;
+
+    com.mcpdbwizard.app.common.MetadataCursorGuard cursorGuard() {
+        if (metadataCursorGuard == null) {
+            metadataCursorGuard = new com.mcpdbwizard.app.common.MetadataCursorGuard(mrLog,
+                    () -> mrConnection, this::reconnectForCursorExhaustion);
+        }
+        return metadataCursorGuard;
+    }
+
+    /**
+     * Disconnects and reconnects to release every cursor the session holds, after ORA-01000. Both
+     * steps are logged with the reason (David, 2026-11-12: a reconnect for this must never be
+     * silent). The statements this wrangler keeps in fields are released before the old session
+     * closes and pointed at the new one after, so none of them is left holding a closed connection:
+     * a released statement re-prepares on its next use.
+     */
+    private java.sql.Connection reconnectForCursorExhaustion(String why) throws com.mcpdbwizard.pub.CSException {
+        java.util.List<com.mcpdbwizard.pub.DmlStatement> theCached = cachedStatements();
+        mrLog.warning("Disconnecting from the database (" + why + ") to release the cursors this session holds.");
+        for (int i = 0; i < theCached.size(); i++) {
+            theCached.get(i).releaseResources();
+        }
+        disconnect();
+        connect();
+        for (int i = 0; i < theCached.size(); i++) {
+            theCached.get(i).setConnection(mrConnection);
+        }
+        mrLog.warning("Reconnected to the database after " + why + " (" + theCached.size()
+                + " cached statement(s) moved to the new session).");
+        return mrConnection;
+    }
+
+    /** Every statement this wrangler holds in a field, found by type rather than by a hand-kept list. */
+    private java.util.List<com.mcpdbwizard.pub.DmlStatement> cachedStatements() {
+        java.util.List<com.mcpdbwizard.pub.DmlStatement> theStatements = new java.util.ArrayList<>();
+        for (Class<?> c = getClass(); c != null && c != Object.class; c = c.getSuperclass()) {
+            for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(f.getModifiers())
+                        || !com.mcpdbwizard.pub.DmlStatement.class.isAssignableFrom(f.getType())) {
+                    continue;
+                }
+                try {
+                    f.setAccessible(true);
+                    Object theValue = f.get(this);
+                    if (theValue != null) {
+                        theStatements.add((com.mcpdbwizard.pub.DmlStatement) theValue);
+                    }
+                } catch (ReflectiveOperationException | RuntimeException e) {
+                    mrLog.warning("Could not reach cached statement " + f.getName() + " before reconnecting: " + e);
+                }
+            }
+        }
+        return theStatements;
+    }
+
 
     private int getVarrayLengthForPackageVarray(PlsqlRecordObject tempRec) {
 
@@ -26971,10 +27028,9 @@ public class SAAdminWrangler extends SADbWrangler {
             if (tempRec.typeSubName == null)
             // We have a table of something defined outside a package
             {
-                QueryStatement collQry = new QueryStatement(SqlStatementDictionary.getCollTypeQuery(currentOracleVersion), mrLog, mrConnection);
-                collQry.setParam(1, tempRec.typeOwner);
-                collQry.setParam(2, tempRec.typeName);
-                ReadOnlyRowSet colRow = collQry.execute();
+                ReadOnlyRowSet colRow = cursorGuard().query("collection type " + tempRec.typeOwner + "."
+                        + tempRec.typeName, SqlStatementDictionary.getCollTypeQuery(currentOracleVersion),
+                        tempRec.typeOwner, tempRec.typeName);
                 String collectionOwner = colRow.getString("ELEM_TYPE_OWNER");
                 String collectionName = colRow.getString("ELEM_TYPE_NAME");
                 Integer collectionLength = colRow.getIntegerObj("UPPER_BOUND");

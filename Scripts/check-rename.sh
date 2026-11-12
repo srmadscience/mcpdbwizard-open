@@ -461,7 +461,9 @@ else
 #   server at start-up; found by the MariaDB port's whole-corpus run).
 # 2026-11-09: 554 -> 555. ONE new file, UnmatchedConfigEntryTest (a config entry the object list lacks was
 #   dropped without a word; found by the MariaDB port's whole-corpus run).
-expect "copyright chain-of-title lines" 555 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-11-12 (2.0.37, the cursor-exhaustion fix): 555 -> 558. THREE new files: MetadataCursorGuard and
+# its two tests, MetadataCursorGuardTest and MetadataCursorGuardLiveTest.
+expect "copyright chain-of-title lines" 558 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

@@ -1221,6 +1221,13 @@ public class CallableStatementParameterEngine {
      * / collection children (DATA_LEVEL &gt; 0) are excluded; a record/collection parameter
      * itself surfaces as a non-JSON-crossable javaType at level 0, so the emission skips it.
      */
+    /** The wrangler's cursor guard, for the dictionary lookups getMcpParamTuples makes (2.0.37). */
+    private com.mcpdbwizard.app.common.MetadataCursorGuard cursorGuard;
+
+    public void setCursorGuard(com.mcpdbwizard.app.common.MetadataCursorGuard theGuard) {
+        this.cursorGuard = theGuard;
+    }
+
     public String[][] getMcpParamTuples() throws Exception {
         java.util.ArrayList<String[]> rows = new java.util.ArrayList<String[]>();
         for (int i = 0; i < theRowSet.size(); i++) {
@@ -1271,22 +1278,32 @@ public class CallableStatementParameterEngine {
      */
     private String lookupCollectionElementType(String owner, String typeName, String typeSubname) {
         try {
-            QueryStatement theQuery;
+            String theSql;
+            String[] theParams;
             if (typeSubname != null) {
-                theQuery = new QueryStatement(
-                        "SELECT elem_type_name FROM all_plsql_coll_types WHERE owner = ? AND package_name = ? AND type_name = ?",
-                        theLog, theConnection);
-                theQuery.setParam(1, owner);
-                theQuery.setParam(2, typeName);
-                theQuery.setParam(3, typeSubname);
+                theSql = "SELECT elem_type_name FROM all_plsql_coll_types WHERE owner = ? AND package_name = ? AND type_name = ?";
+                theParams = new String[] {owner, typeName, typeSubname};
             } else {
-                theQuery = new QueryStatement(
-                        "SELECT elem_type_name FROM all_coll_types WHERE owner = ? AND type_name = ?",
-                        theLog, theConnection);
-                theQuery.setParam(1, owner);
-                theQuery.setParam(2, typeName);
+                theSql = "SELECT elem_type_name FROM all_coll_types WHERE owner = ? AND type_name = ?";
+                theParams = new String[] {owner, typeName};
             }
-            ReadOnlyRowSet theResult = theQuery.execute();
+            ReadOnlyRowSet theResult;
+            if (cursorGuard != null) {
+                // Run once per collection parameter; through the guard so it cannot run the session
+                // out of cursors (ORA-01000), as it could while it never closed its statement.
+                theResult = cursorGuard.query("collection type " + owner + "." + typeName
+                        + (typeSubname == null ? "" : "." + typeSubname), theSql, theParams);
+            } else {
+                QueryStatement theQuery = new QueryStatement(theSql, theLog, theConnection);
+                try {
+                    for (int i = 0; i < theParams.length; i++) {
+                        theQuery.setParam(i + 1, theParams[i]);
+                    }
+                    theResult = theQuery.execute();
+                } finally {
+                    theQuery.releaseResources();
+                }
+            }
             if (theResult.size() > 0) {
                 theResult.setCurrentRowNumber(0);
                 String elementType = theResult.getString("ELEM_TYPE_NAME");
@@ -1295,7 +1312,10 @@ public class CallableStatementParameterEngine {
                 }
             }
         } catch (Exception theException) {
-            theLog.debug("MCP: could not resolve collection element type for " + typeName + ": " + theException);
+            // Was DEBUG: a routine whose collection type cannot be read is left out of the MCP server
+            // (its element type reads as unsupported), so the reason has to be visible.
+            theLog.warning("MCP: could not resolve the collection element type of " + typeName
+                    + "; a routine with this parameter will not be exposed: " + theException);
         }
         return "";
     }
