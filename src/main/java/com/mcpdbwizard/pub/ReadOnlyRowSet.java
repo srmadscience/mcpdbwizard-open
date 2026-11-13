@@ -1149,7 +1149,15 @@ public class ReadOnlyRowSet {
         } else {
             switch (oracleUnderlyingDatatype) {
                 case SqlUtils.ORACLE_DATE_DATATYPE: {
-                    tempDate = new java.sql.Timestamp(((java.sql.Timestamp) tempObject).getTime());
+                    if (!(tempObject instanceof java.sql.Timestamp)) {
+                        // A MariaDB zero date (0000-00-00), kept as its text: Java has no value for it.
+                        createInvalidDatatypeCastException(oracleDataType + " '" + tempObject + "'", "java.sql.Timestamp", oracleColumnName);
+                    }
+                    java.sql.Timestamp stored = (java.sql.Timestamp) tempObject;
+                    tempDate = new java.sql.Timestamp(stored.getTime());
+                    // getTime() is milliseconds: keep the nanoseconds, which an Oracle DATE never
+                    // has but a Postgres timestamp or a MariaDB datetime(6) does.
+                    tempDate.setNanos(stored.getNanos());
                     break;
                 }
                 case SqlUtils.ORACLE_TIMESTAMP_DATATYPE: {
@@ -2497,7 +2505,9 @@ public class ReadOnlyRowSet {
                     break;
                 }
                 case SqlUtils.ORACLE_DATE_DATATYPE: {
-                    newString = convertTimestampToString(tempValue, theTimestampFormat);
+                    // A MariaDB zero date is held as its text, which is then the value.
+                    newString = tempValue instanceof String ? (String) tempValue
+                            : convertTimestampToString(tempValue, theTimestampFormat);
                     break;
                 }
                 case SqlUtils.ORACLE_TIMESTAMP_DATATYPE: {
