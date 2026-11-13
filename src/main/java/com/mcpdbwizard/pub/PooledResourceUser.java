@@ -60,4 +60,18 @@ public interface PooledResourceUser extends OracleResourceUser {
      * has nowhere to report a failure to.
      */
     void closeFactory();
+
+    /**
+     * Release the statements of every DAO this factory has made, keeping the connection: the DAOs
+     * are made again, on the same session, the next time they are needed. Called by the pool on the
+     * way back once ORA-01000 has been seen (2.0.37 and later; see
+     * {@link DaoFactoryPool#isCursorExhaustion}), so a server publishing more tools than the
+     * database's OPEN_CURSORS stops running its sessions out of cursors.
+     *
+     * <p>A default no-op so factories generated before this existed still compile and run: for
+     * those the pool still recovers from ORA-01000 by discarding the session and retrying, but cannot
+     * stop the next one. Never throws.
+     */
+    default void releaseStatements() {
+    }
 }

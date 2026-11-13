@@ -6,7 +6,6 @@ import com.mcpdbwizard.pub.QueryStatement;
 import com.mcpdbwizard.pub.ReadOnlyRowSet;
 
 import java.sql.Connection;
-import java.sql.SQLException;
 
 /**
  * Runs the generator's per-object dictionary queries, and recovers when the session runs out of
@@ -69,19 +68,8 @@ public class MetadataCursorGuard {
      * messages are read as well as the vendor code.
      */
     public static boolean isCursorExhaustion(Throwable theProblem) {
-        for (Throwable t = theProblem; t != null; t = t.getCause()) {
-            if (t instanceof SQLException && ((SQLException) t).getErrorCode() == 1000) {
-                return true;
-            }
-            String theMessage = t.getMessage();
-            if (theMessage != null && theMessage.contains("ORA-01000")) {
-                return true;
-            }
-            if (t.getCause() == t) {
-                break;
-            }
-        }
-        return false;
+        // One definition, shared with the generated servers' pool (DaoFactoryPool).
+        return com.mcpdbwizard.pub.DaoFactoryPool.isCursorExhaustion(theProblem);
     }
 
     /**

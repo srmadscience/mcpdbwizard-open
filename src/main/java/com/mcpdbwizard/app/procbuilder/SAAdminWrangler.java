@@ -6038,6 +6038,61 @@ public class SAAdminWrangler extends SADbWrangler {
         theJavaCode.unIndent();
         theJavaCode.print("");
 
+        if (!mcpPooled) {
+            // ORA-01000 recovery for the one shared factory (2.0.37+, known issue 10). A pooled server
+            // gets the same policy from DaoFactoryPool. Here the cursors are freed by releasing the
+            // factory's statements on the SAME session rather than by reconnecting: an unpooled server
+            // keeps one connection, and a URL context applied to it must survive the retry.
+            if (comments) {
+                theJavaCode.print("// The database refused a cursor (ORA-01000): the factory keeps the statement of every");
+                theJavaCode.print("// DAO it has used, so a server that has served enough distinct tools runs its session");
+                theJavaCode.print("// out. Nothing changes until that happens; then this logs it, releases the factory's");
+                theJavaCode.print("// statements (keeping the connection), retries, and releases them after every call");
+                theJavaCode.print("// from then on.");
+            }
+            theJavaCode.print("private static volatile boolean releaseStatementsAfterCall;");
+            theJavaCode.print("");
+            theJavaCode.print("private static String runReleasingCursors(DocOp theOperation) throws Exception");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("try");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("String theResult = theOperation.run();");
+            theJavaCode.print("if (releaseStatementsAfterCall)");
+            theJavaCode.print("  {");
+            theJavaCode.print("  theFactory.releaseStatements();");
+            theJavaCode.print("  }");
+            theJavaCode.print("return theResult;");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("catch (Exception e)");
+            theJavaCode.indent();
+            theJavaCode.print("{");
+            theJavaCode.print("if (!com.mcpdbwizard.pub.DaoFactoryPool.isCursorExhaustion(e))");
+            theJavaCode.print("  {");
+            theJavaCode.print("  throw e;");
+            theJavaCode.print("  }");
+            theJavaCode.print("boolean theFirst = !releaseStatementsAfterCall;");
+            theJavaCode.print("releaseStatementsAfterCall = true;");
+            theJavaCode.print("AUDIT_LOG.warning(theFirst");
+            theJavaCode.print("        ? \"ORA-01000 (maximum open cursors exceeded): this server's database session ran out\"");
+            theJavaCode.print("            + \" of cursors. From now on its statements are released after each call. Raising the\"");
+            theJavaCode.print("            + \" database's OPEN_CURSORS, or splitting the config, avoids this (known issue 10).\"");
+            theJavaCode.print("        : \"ORA-01000 (maximum open cursors exceeded) again, although statements are now\"");
+            theJavaCode.print("            + \" released after each call.\");");
+            theJavaCode.print("theFactory.releaseStatements();");
+            theJavaCode.print("AUDIT_LOG.warning(\"Released the session's statements, keeping its connection; retrying the call.\");");
+            theJavaCode.print("String theResult = theOperation.run();");
+            theJavaCode.print("theFactory.releaseStatements();");
+            theJavaCode.print("return theResult;");
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("}");
+            theJavaCode.unIndent();
+            theJavaCode.print("");
+        }
+
         if (!mcpContextParams.isEmpty()) {
             if (comments) {
                 theJavaCode.print("// Set the URL context parameters on the session a call is about to use. A failure");
@@ -6183,7 +6238,7 @@ public class SAAdminWrangler extends SADbWrangler {
                 theJavaCode.print("theFactory.confirmConnection();");
                 theJavaCode.print("applyContext(theFactory.theConnection, theAppliedContext);");
             }
-            theJavaCode.print("theJson = theOperation.run();");
+            theJavaCode.print("theJson = runReleasingCursors(theOperation);");
         }
         theJavaCode.print("theOutcome = theJson == null ? " + MCP_CALL_RECORD_CLASS + ".OUTCOME_NOT_FOUND : "
                 + MCP_CALL_RECORD_CLASS + ".OUTCOME_OK;");
@@ -16013,6 +16068,51 @@ public class SAAdminWrangler extends SADbWrangler {
                         , true
                         , "releaseConnection();"
                         , hasBatchCommit);
+
+        // releaseStatements(): the statements go, the connection stays (2.0.37+). DaoFactoryPool calls
+        // it on each factory's way back once a server has seen ORA-01000, so a server publishing more
+        // tools than OPEN_CURSORS stops running its sessions out of cursors (known issue 10). Every DAO
+        // field is made lazily by its getter (checked: all 554 in generic_test1's factory), so a field
+        // set to null here is made again, on this connection, the next time a tool needs it.
+        if (comments) {
+            theJavaCode.print("/**");
+            theJavaCode.print("* Release the statements of every DAO this factory has made, keeping the connection:");
+            theJavaCode.print("* each DAO is made again, on this session, the next time it is needed. Called by");
+            theJavaCode.print("* the DAO factory pool after the database has refused a cursor (ORA-01000).");
+            theJavaCode.print("*/");
+        }
+        theJavaCode.print("public void releaseStatements()");
+        theJavaCode.indent();
+        theJavaCode.print("{");
+        theJavaCode.print("try");
+        theJavaCode.indent();
+        theJavaCode.print("{");
+        for (int i = 0; i < oracleUsageObjects.length; i++) {
+            String cmt = oracleUsageObjectsBroken == null ? "" : oracleUsageObjectsBroken[i];
+            theJavaCode.print(cmt + "if (" + oracleUsageObjects[i] + " != null)");
+            theJavaCode.indent();
+            theJavaCode.print(cmt + "{");
+            theJavaCode.print(cmt + "if (" + oracleUsageObjects[i] + ".hasResources())");
+            theJavaCode.indent();
+            theJavaCode.print(cmt + "{");
+            theJavaCode.print(cmt + oracleUsageObjects[i] + ".releaseResources();");
+            theJavaCode.print(cmt + "}");
+            theJavaCode.unIndent();
+            theJavaCode.print(cmt + oracleUsageObjects[i] + " = null;");
+            theJavaCode.print(cmt + "}");
+            theJavaCode.unIndent();
+        }
+        theJavaCode.print("}");
+        theJavaCode.unIndent();
+        theJavaCode.print("catch (Exception e)");
+        theJavaCode.indent();
+        theJavaCode.print("{");
+        theJavaCode.print("" + stheLog + ".warning(\"Releasing statements after ORA-01000: \" + e);");
+        theJavaCode.print("}");
+        theJavaCode.unIndent();
+        theJavaCode.print("}");
+        theJavaCode.unIndent();
+        theJavaCode.print("");
 
         if (stats) {
             addStatsMethodsIndirect(oracleUsageObjects, oracleUsageObjectsBroken, theJavaCode, debugMessages, comments);

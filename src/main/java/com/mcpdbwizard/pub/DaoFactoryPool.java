@@ -156,6 +156,23 @@ public class DaoFactoryPool<T extends PooledResourceUser> implements AutoCloseab
      * @throws Exception                whatever the work threw
      */
     public <R> R withFactory(PoolTask<T, R> theTask) throws Exception {
+        try {
+            return withFactoryOnce(theTask);
+        } catch (Exception e) {
+            if (!isCursorExhaustion(e)) {
+                throw e;
+            }
+            // ORA-01000. releaseFailedWork has already logged it, set the flag and discarded the
+            // factory (disconnecting that session); retry once on a fresh one.
+            cursorRecoveries.incrementAndGet();
+            if (theLog != null) {
+                theLog.warning("Reconnecting to retry the call after ORA-01000.");
+            }
+            return withFactoryOnce(theTask);
+        }
+    }
+
+    private <R> R withFactoryOnce(PoolTask<T, R> theTask) throws Exception {
         T theFactory = borrow();
         Exception theFailure = null;
         try {
@@ -228,7 +245,75 @@ public class DaoFactoryPool<T extends PooledResourceUser> implements AutoCloseab
      * @param theFailure what the borrower threw; decides whether the connection is suspect
      */
     private void releaseFailedWork(T theFactory, Throwable theFailure) {
+        if (isCursorExhaustion(theFailure)) {
+            // ORA-01000: a factory keeps the statement of every DAO it has used, so a server that
+            // has served enough distinct tools runs its session out of cursors (known issue 10).
+            // The policy (David, 2026-11-12): nothing changes until it is seen; then say so, set the
+            // flag, discard this factory (its session goes, and every cursor with it), and let
+            // withFactory retry on a fresh one. From then on every factory releases its statements
+            // on the way back, so the limit is not reached again. Returning this factory instead
+            // would hand the next borrower a session still at its limit.
+            boolean theFirst = !releaseStatementsOnReturn;
+            releaseStatementsOnReturn = true;
+            if (theLog != null) {
+                theLog.warning(theFirst
+                        ? "ORA-01000 (maximum open cursors exceeded): this server's database session ran"
+                                + " out of cursors. From now on every factory releases its statements after"
+                                + " each call. Raising the database's OPEN_CURSORS, or splitting the config,"
+                                + " avoids this (known issue 10)."
+                        : "ORA-01000 (maximum open cursors exceeded) again, although statements are now"
+                                + " released after each call.");
+                theLog.warning("Disconnecting the database session that ran out of cursors (ORA-01000).");
+            }
+            try {
+                theFactory.settleTransaction(false);
+            } catch (Exception e) {
+                debug("DaoFactoryPool - could not roll back the exhausted factory: " + e);
+            }
+            invalidate(theFactory);
+            return;
+        }
         settleAndReturn(theFactory, false, isConnectionFatal(theFailure));
+    }
+
+    /**
+     * Set once ORA-01000 has been seen: from then on every factory releases the statements of its
+     * DAOs as it comes back ({@link PooledResourceUser#releaseStatements()}), keeping its connection.
+     */
+    private volatile boolean releaseStatementsOnReturn;
+
+    private final AtomicLong cursorRecoveries = new AtomicLong();
+
+    /** True once this pool has seen ORA-01000 and releases statements after each call. */
+    public boolean isReleasingStatementsOnReturn() {
+        return releaseStatementsOnReturn;
+    }
+
+    /** How many calls this pool has retried because of ORA-01000. */
+    public long getCursorRecoveries() {
+        return cursorRecoveries.get();
+    }
+
+    /**
+     * True when {@code theFailure}, or anything that caused it, is ORA-01000 (maximum open cursors
+     * exceeded). The pub library wraps the driver's exception in a CSException carrying the Oracle
+     * text, so messages are read as well as the vendor code. Shared with the generator's own
+     * recovery ({@code MetadataCursorGuard}) so there is one definition.
+     */
+    public static boolean isCursorExhaustion(Throwable theFailure) {
+        for (Throwable t = theFailure; t != null; t = t.getCause()) {
+            if (t instanceof SQLException && ((SQLException) t).getErrorCode() == 1000) {
+                return true;
+            }
+            String theMessage = t.getMessage();
+            if (theMessage != null && theMessage.contains("ORA-01000")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -263,6 +348,16 @@ public class DaoFactoryPool<T extends PooledResourceUser> implements AutoCloseab
             debug("DaoFactoryPool - connection unusable after a failed call, discarding the factory");
             invalidate(theFactory);
             return;
+        }
+
+        if (releaseStatementsOnReturn) {
+            // After ORA-01000: give the cursors back before the factory goes back. The connection,
+            // and the logon it cost, are kept.
+            try {
+                theFactory.releaseStatements();
+            } catch (Exception e) {
+                debug("DaoFactoryPool - could not release a factory's statements: " + e);
+            }
         }
 
         try {
