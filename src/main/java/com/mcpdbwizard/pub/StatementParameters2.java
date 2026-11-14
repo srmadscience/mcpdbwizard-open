@@ -981,7 +981,7 @@ public class StatementParameters2 {
                             // Sparse VECTOR (23ai): build an oracle.sql.VECTOR (FLOAT64; Oracle coerces
                             // to the target element format) from {length, indices, values} and bind it
                             // as a generic VECTOR (there is no VECTOR_SPARSE bind type).
-                            thePreparedStatement.setObject(i + 1, ((SparseVector) parameterArray[i]).toVector(), oracle.jdbc.OracleType.VECTOR);
+                            thePreparedStatement.setObject(i + 1, OracleSparseVectors.toVector((SparseVector) parameterArray[i]), oracle.jdbc.OracleType.VECTOR);
                         } else if (parameterArray[i] instanceof oracle.sql.CLOB) {
                             ((OraclePreparedStatement) thePreparedStatement).setCLOB(i + 1, (oracle.sql.CLOB) parameterArray[i]);
                         } else if (parameterArray[i] instanceof oracle.sql.BLOB) {

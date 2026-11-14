@@ -129,13 +129,26 @@ public final class McpDates {
     /**
      * Render a timestamp, keeping the fractional seconds a {@code DATE} does not have.
      *
+     * <p>Every digit the value carries, down to the last that is not zero, and never fewer than
+     * three: a whole-millisecond value renders exactly as {@link #ISO_PATTERN_MILLIS} always has,
+     * and a {@code TIMESTAMP(6)} keeps its microseconds, which the milliseconds pattern alone cut
+     * off ({@code .123456} came back {@code .123}).
+     *
      * @param theTimestamp the value, or null
-     * @return the ISO-8601 text with milliseconds, or null for a null input
+     * @return the ISO-8601 text with at least milliseconds, or null for a null input
      */
     public static String formatTimestamp(java.sql.Timestamp theTimestamp) {
-        return theTimestamp == null
-                ? null
-                : new java.text.SimpleDateFormat(ISO_PATTERN_MILLIS).format(theTimestamp);
+        if (theTimestamp == null) {
+            return null;
+        }
+        String theMillis = new java.text.SimpleDateFormat(ISO_PATTERN_MILLIS).format(theTimestamp);
+        String theDigits = String.format("%09d", theTimestamp.getNanos());
+        int theEnd = theDigits.length();
+        while (theEnd > 3 && theDigits.charAt(theEnd - 1) == '0') {
+            theEnd--;
+        }
+        // The pattern's own three digits are the nanos' first three, so only what follows is added.
+        return theMillis + theDigits.substring(3, theEnd);
     }
 
     /**
@@ -382,6 +395,14 @@ public final class McpDates {
                     ? theMoment.toInstant(theOffset)
                     : theMoment.atZone(ZoneId.systemDefault()).toInstant();
 
+            // Digits finer than a millisecond need a Timestamp, the Date that can hold them; for
+            // anything coarser this is the plain Date it always was.
+            int theNanos = isoNanoOfSecond(theText);
+            if (theNanos > 0 && theNanos % 1000000 != 0) {
+                java.sql.Timestamp theStamp = new java.sql.Timestamp(theInstant.toEpochMilli());
+                theStamp.setNanos(theNanos);
+                return theStamp;
+            }
             return new java.util.Date(theInstant.toEpochMilli());
         } catch (IllegalArgumentException e) {
             throw e;
@@ -398,6 +419,9 @@ public final class McpDates {
      */
     public static java.sql.Timestamp parseTimestamp(Object theValue) {
         java.util.Date theDate = parse(theValue);
+        if (theDate instanceof java.sql.Timestamp) {
+            return (java.sql.Timestamp) theDate;
+        }
         return theDate == null ? null : new java.sql.Timestamp(theDate.getTime());
     }
 

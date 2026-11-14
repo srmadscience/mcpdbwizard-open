@@ -465,7 +465,16 @@ else
 # its two tests, MetadataCursorGuardTest and MetadataCursorGuardLiveTest.
 # 2026-11-12 (known issue 10, ORA-01000 in generated servers): 558 -> 561. THREE new files:
 # DaoFactoryPoolCursorTest, DaoFactoryPoolCursorLiveTest and the harness TReleaseStatements.
-expect "copyright chain-of-title lines" 561 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-11-14: 561 -> 562. ONE new file, pub/OracleSparseVectors (from mcpdbwizard-pg 2b17b29: the Oracle
+# VECTOR conversions moved out of SparseVector, so the class names no Oracle type).
+# 2026-11-14: 562 -> 566. FOUR new files: pub/OracleThinUrl and OracleThinUrlTest (a password holding
+# - / or @ broke the generated factory's thin URL), and McpServerFeaturesLiveTest with its helper
+# GeneratedOracleServer (the MariaDB fork's server-features test, ported).
+# 2026-11-14: 566 -> 567. ONE new file, ReadOnlyRowSetNumberTest (from the forks: a numeric getter cast a
+# driver's Long/Short/Double to BigDecimal; Oracle's NUMBER is unaffected).
+# 2026-11-14: 567 -> 569. TWO new files, pub/JdbcLogin and JdbcLoginTest (an environment password is
+# passed as a property, never written into the URL, for every driver).
+expect "copyright chain-of-title lines" 569 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"

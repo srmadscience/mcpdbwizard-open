@@ -13738,6 +13738,19 @@ public class SAAdminWrangler extends SADbWrangler {
                     + com.mcpdbwizard.app.common.DbPasswordSource.toJavaExpression(
                             connectionName, PASSWORD_FROM_ENV_CALL) + ";");
             theJavaCode.print("");
+            // The URL as the config wrote it, placeholder and all: connecting with it through
+            // JdbcLogin keeps the password out of the URL, where every driver misreads some
+            // ordinary passwords (see JdbcLogin). Emitted only with an environment password, so a
+            // config with a literal one is unchanged.
+            if (com.mcpdbwizard.app.common.DbPasswordSource.isFromEnvironment(connectionName)) {
+                if (comments) {
+                    theJavaCode.print("/** ");
+                    theJavaCode.print("* The URL with its password placeholder, for JdbcLogin");
+                    theJavaCode.print("*/ ");
+                }
+                theJavaCode.print("protected String theUrlTemplate = \"" + javaStringLiteral(connectionName) + "\";");
+                theJavaCode.print("");
+            }
 
             if (oracleVersion.startsWith("DB2")) {
                 if (comments) {
@@ -15526,7 +15539,12 @@ public class SAAdminWrangler extends SADbWrangler {
                 theJavaCode.indent();
                 theJavaCode.print("{");
                 theJavaCode.print("");
-                theJavaCode.print("theConnection = (OracleConnection)java.sql.DriverManager.getConnection (theUrl);");
+                // The credentials leave the URL before the driver sees it: its own parsing refuses a password
+                // holding '-' or '/' (ORA-17067) and misreads one holding '@' (ORA-17868). See OracleThinUrl.
+                theJavaCode.print(com.mcpdbwizard.app.common.DbPasswordSource.isFromEnvironment(connectionName)
+                        ? "theConnection = (OracleConnection)com.mcpdbwizard.pub.JdbcLogin.connect(theUrlTemplate, "
+                                + PASSWORD_FROM_ENV_CALL + ");"
+                        : "theConnection = (OracleConnection)com.mcpdbwizard.pub.OracleThinUrl.connect(theUrl);");
                 theJavaCode.print("");
                 theJavaCode.print(stheLog + ".info(\"Logged in as user \" + ((OracleConnection)theConnection).getUserName());");
             }

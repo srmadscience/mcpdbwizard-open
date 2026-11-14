@@ -23,8 +23,11 @@ package com.mcpdbwizard.pub;
  * sparse vector round-trips as a {@code {"length":…, "indices":[…], "values":[…]}} object with no
  * extra mapping.
  *
- * <p>Requires ojdbc 23.26+ (the sparse {@code oracle.sql.VECTOR} accessors); earlier drivers cannot
- * read or write sparse vectors.
+ * <p>Plain data, with no Oracle type in any signature: a PostgreSQL server (mcpdbwizard-pg) crosses a
+ * pgvector {@code sparsevec} as one, without ojdbc on its classpath, and Jackson introspects every
+ * method of a class it maps, so one {@code oracle.sql.VECTOR} parameter was a NoClassDefFoundError.
+ * The conversions to and from {@code oracle.sql.VECTOR} are in {@link OracleSparseVectors}, and need
+ * ojdbc 23.26+.
  *
  * @since Oracle 23ai
  * Copyright 2003-2026 ATB Consultancy Services Ltd
@@ -49,31 +52,6 @@ public final class SparseVector {
         this.length = length;
         this.indices = indices;
         this.values = values;
-    }
-
-    /**
-     * Build a {@code SparseVector} from a sparse {@code oracle.sql.VECTOR} (its
-     * {@code toSparseDoubleArray()} view). Returns {@code null} for a {@code null} input.
-     *
-     * @throws java.sql.SQLException if the VECTOR cannot be read as a sparse double array
-     */
-    public static SparseVector fromVector(oracle.sql.VECTOR theVector) throws java.sql.SQLException {
-        if (theVector == null) {
-            return (null);
-        }
-        oracle.sql.VECTOR.SparseDoubleArray theSparse = theVector.toSparseDoubleArray();
-        return (new SparseVector(theSparse.length(), theSparse.indices(), theSparse.values()));
-    }
-
-    /**
-     * Turn this value into a bindable {@code oracle.sql.VECTOR} (a FLOAT64 sparse vector — Oracle
-     * coerces to the target column/param element format).
-     *
-     * @throws java.sql.SQLException if the sparse vector cannot be constructed
-     */
-    public oracle.sql.VECTOR toVector() throws java.sql.SQLException {
-        return (oracle.sql.VECTOR.ofFloat64Values(
-                oracle.sql.VECTOR.SparseDoubleArray.of(length, indices, values)));
     }
 
     /**

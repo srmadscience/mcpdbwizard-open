@@ -450,7 +450,10 @@ public class ReadOnlyRowSet {
 
             // From 6.0.2615: removed reference to 'hitMemLimit'...
 
-            while (theResultSet.next() && rowCount < maxRows) {
+            // The count is checked first: next() the other way round consumed row maxRows + 1, and
+            // the hitRowLimit check below then missed it, so a set one row over the limit read as
+            // complete.
+            while (rowCount < maxRows && theResultSet.next()) {
                 // Increment row counter
                 rowCount++;
 
@@ -794,7 +797,7 @@ public class ReadOnlyRowSet {
                     if (theVector == null) {
                         newObject = null;
                     } else if (theVector.isSparse()) {
-                        newObject = SparseVector.fromVector(theVector);
+                        newObject = OracleSparseVectors.fromVector(theVector);
                     } else {
                         newObject = theVector.toDoubleArray();
                     }
@@ -1348,7 +1351,11 @@ public class ReadOnlyRowSet {
                     break;
                 }
                 case SqlUtils.ORACLE_NUMBER_DATATYPE: {
-                    BigDecimal newBigDecimal = (BigDecimal) tempValue;
+                    BigDecimal newBigDecimal = numberToBigDecimal(tempValue);
+                    if (newBigDecimal == null) {
+                        createInvalidDatatypeCastException(oracleDataType + " '" + tempValue + "'", "java.lang.Boolean",
+                                oracleColumnName);
+                    }
 
                     if (newBigDecimal.doubleValue() == 0) {
                         newBoolean =  Boolean.valueOf(false);
@@ -2379,6 +2386,33 @@ public class ReadOnlyRowSet {
      * @return java.lang.BigDecimal the Value of column #columnId if it can be turned into a BigDecimal.
      * @throws CSDBInvalidDatatypeCastException if columnId is not of a data type that can be turned into a BigDecimal.
      */
+    /**
+     * A numeric column's value as a BigDecimal, whatever {@code getObject} returned for it. Oracle's
+     * NUMBER comes back as a BigDecimal already, but a driver may return its own types for a numeric
+     * column: pgjdbc returns an Integer for {@code int4}, a Long for {@code int8} (and so for
+     * {@code count(*)}), a Short, a Float or a Double. Casting those to BigDecimal threw a raw
+     * ClassCastException from every numeric getter. Null when the value is no number, or is a NaN or
+     * an infinity, which no BigDecimal can hold; the caller then refuses it by name.
+     */
+    static BigDecimal numberToBigDecimal(Object theValue) {
+        if (theValue instanceof BigDecimal) {
+            return (BigDecimal) theValue;
+        }
+        if (theValue instanceof Integer || theValue instanceof Long || theValue instanceof Short
+                || theValue instanceof Byte) {
+            return BigDecimal.valueOf(((Number) theValue).longValue());
+        }
+        if (theValue instanceof java.math.BigInteger) {
+            return new BigDecimal((java.math.BigInteger) theValue);
+        }
+        if (theValue instanceof Double || theValue instanceof Float) {
+            double theDouble = ((Number) theValue).doubleValue();
+            // The value's own text, so a float4 0.1 stays 0.1 rather than becoming 0.100000001490116...
+            return Double.isNaN(theDouble) || Double.isInfinite(theDouble) ? null : new BigDecimal(theValue.toString());
+        }
+        return null;
+    }
+
     private java.math.BigDecimal getBigDecimal
     (int oracleUnderlyingDatatype
             , String oracleDataType
@@ -2392,12 +2426,11 @@ public class ReadOnlyRowSet {
         } else {
             switch (oracleUnderlyingDatatype) {
                 case SqlUtils.ORACLE_NUMBER_DATATYPE: {
-                    if (tempValue instanceof java.lang.Integer) {
-                        newNumber = new BigDecimal(((java.lang.Integer) tempValue).intValue());
-                    } else {
-                        newNumber = (BigDecimal) tempValue;
+                    newNumber = numberToBigDecimal(tempValue);
+                    if (newNumber == null) {
+                        createInvalidDatatypeCastException(oracleDataType + " '" + tempValue + "'", "java.math.BigDecimal",
+                                oracleColumnName);
                     }
-
                     break;
                 }
                 case SqlUtils.ORACLE_TEXT_DATATYPE:

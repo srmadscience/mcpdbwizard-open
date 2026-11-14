@@ -280,7 +280,7 @@ public class CallableStatementParameters extends StatementParameters2 {
                             // the runtime type.
                             oracle.sql.VECTOR vecOut = theCallableStatement.getObject(i + 1, oracle.sql.VECTOR.class);
                             if (vecOut != null && vecOut.isSparse()) {
-                                parameterArray[i] = com.mcpdbwizard.pub.SparseVector.fromVector(vecOut);
+                                parameterArray[i] = com.mcpdbwizard.pub.OracleSparseVectors.fromVector(vecOut);
                             } else {
                                 try {
                                     parameterArray[i] = theCallableStatement.getObject(i + 1, double[].class);

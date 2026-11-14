@@ -208,6 +208,36 @@ class McpDatesTest {
         assertEquals("2003-06-09T18:38:00.500", McpDates.formatTimestamp(t));
     }
 
+    /**
+     * A TIMESTAMP(6) keeps its microseconds both ways. The milliseconds pattern alone wrote
+     * {@code .123456} as {@code .123}, and parse() went through a java.util.Date, so the digits
+     * were gone before anything could keep them: measured through a generated Postgres server,
+     * an index-by table of timestamp sent {@code .123456} came back {@code .123}.
+     */
+    @Test
+    void microsecondsSurviveBothWays() {
+        for (String text : new String[]{"2019-03-01T14:25:36.123456", "2019-03-01T14:25:36.000001",
+                "2019-03-01T14:25:36.123456789", "2019-03-01T14:25:36.1234"}) {
+            java.sql.Timestamp t = McpDates.parseTimestamp(text);
+            assertEquals(text, McpDates.formatTimestamp(t), text);
+            Date d = McpDates.parse(text);
+            assertTrue(d instanceof java.sql.Timestamp, text + " needs a Timestamp to hold its digits");
+            assertEquals(text, McpDates.formatAny(d), text);
+        }
+        assertEquals(123456000, McpDates.parseTimestamp("2019-03-01T14:25:36.123456").getNanos());
+    }
+
+    /** Whole milliseconds, or none, render and parse exactly as they always have. */
+    @Test
+    void millisecondValuesAreUnchanged() {
+        assertEquals("2019-03-01T14:25:36.000", McpDates.formatTimestamp(java.sql.Timestamp.valueOf("2019-03-01 14:25:36")));
+        assertEquals("2019-03-01T14:25:36.120", McpDates.formatTimestamp(java.sql.Timestamp.valueOf("2019-03-01 14:25:36.12")));
+        assertEquals("2019-03-01T14:25:36.100", McpDates.formatTimestamp(java.sql.Timestamp.valueOf("2019-03-01 14:25:36.1")));
+        for (String text : new String[]{"2019-03-01T14:25:36", "2019-03-01T14:25:36.500", "2019-03-01T14:25:36.5", "2019-03-01"}) {
+            assertEquals(Date.class, McpDates.parse(text).getClass(), text + " stays a plain Date");
+        }
+    }
+
     // ---------------------------------------------------------------------------------------
     // DATE and unzoned TIMESTAMP index-by elements.
     //
