@@ -98,8 +98,42 @@ public final class OpenCursorCheck {
      */
     public static void warnIfToolsExceedCursors(Connection theConnection, int theToolCount,
                                                 LogInterface theLog) {
-        if (theConnection == null || theLog == null || theToolCount <= 0) {
+        if (theLog == null) {
             return;
+        }
+        Finding theFinding = assess(theConnection, theToolCount);
+        if (theFinding == null) {
+            return;
+        }
+        if (theFinding.exceeded()) {
+            theLog.error(theFinding.message());
+        } else {
+            theLog.warning(theFinding.message());
+        }
+    }
+
+    /**
+     * What this check has to say, if anything.
+     *
+     * @param exceeded true when the tool count has reached the limit itself, which the server logs
+     *                 as an error; false for the early warning and for an unreadable limit
+     * @param message  the sentence, written for an operator
+     */
+    public record Finding(boolean exceeded, String message) {
+    }
+
+    /**
+     * The decision {@link #warnIfToolsExceedCursors} logs, without logging it -- so the web
+     * console's Runtime page can show the same verdict the server wrote into its own log, from the
+     * one copy of the rule. A second copy there would be free to disagree with the server about the
+     * same database.
+     *
+     * @return null when there is nothing to say: the tool count is comfortably under the limit, or
+     *         there is no connection or no tools to judge
+     */
+    public static Finding assess(Connection theConnection, int theToolCount) {
+        if (theConnection == null || theToolCount <= 0) {
+            return null;
         }
 
         int theLimit = readOpenCursors(theConnection);
@@ -108,27 +142,20 @@ public final class OpenCursorCheck {
             // Unknown, and left unknown. Said once at start-up whatever the tool count, because
             // without the limit there is no threshold to be under: a small config is only safe if
             // open_cursors is bigger than it, and that is the fact we do not have.
-            theLog.warning("This server publishes " + theToolCount + " tools, and open_cursors could"
-                    + " not be read from V$PARAMETER on this connection (the account needs"
-                    + " SELECT_CATALOG_ROLE or a grant on it), so it is UNKNOWN and MAY BE EXCEEDED."
-                    + " " + WHY_IT_MATTERS + " Oracle's default open_cursors is "
+            return new Finding(false, "This server publishes " + theToolCount + " tools, and"
+                    + " open_cursors could not be read from V$PARAMETER on this connection (the"
+                    + " account needs SELECT_CATALOG_ROLE or a grant on it), so it is UNKNOWN and"
+                    + " MAY BE EXCEEDED. " + WHY_IT_MATTERS + " Oracle's default open_cursors is "
                     + ORACLE_DEFAULT_OPEN_CURSORS + "; if this server's tool count approaches"
                     + " whatever this database is set to, " + WHAT_TO_DO);
-            return;
         }
 
         if (theToolCount < theLimit * WARN_AT_FRACTION) {
-            return;
+            return null;
         }
 
-        String theMessage = "This server publishes " + theToolCount + " tools and open_cursors is "
-                + theLimit + ". " + WHY_IT_MATTERS + " " + WHAT_TO_DO;
-
-        if (theToolCount >= theLimit) {
-            theLog.error(theMessage);
-        } else {
-            theLog.warning(theMessage);
-        }
+        return new Finding(theToolCount >= theLimit, "This server publishes " + theToolCount
+                + " tools and open_cursors is " + theLimit + ". " + WHY_IT_MATTERS + " " + WHAT_TO_DO);
     }
 
     /** Shared so the known and unknown messages cannot drift into describing different mechanisms. */

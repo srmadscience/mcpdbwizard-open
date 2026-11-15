@@ -89,6 +89,20 @@ public class SqlStatementWrangler extends AbstractTableModel implements TableMod
     public java.io.File webserviceInterfaceCode;
     public BaseMethodRepresentation theMetaData = null;
     /**
+     * What the database said when it was asked to describe this statement and could not, or null
+     * when it could (or was never asked).
+     *
+     * <p>Carried so the reason a statement yields no MCP tool names the CAUSE. Without it the
+     * {@code MCP-UNEXPOSED} line, and the Runtime page that reads it, said only "it produced no
+     * metadata" -- true and useless, when the database had just said which table it could not
+     * find. The commonest cause is an unqualified table name that resolves for the account the
+     * statement was written under and not for the one the config connects as.
+     *
+     * <p>Diagnostic only: nothing decides exposure from it. A product fork that describes
+     * statements its own way sets it too.
+     */
+    public String describeFailure = null;
+    /**
      * Flag for whether bfile methods are needed by services
      */
     public boolean needBfileCreationRoutine;
@@ -1108,6 +1122,7 @@ public class SqlStatementWrangler extends AbstractTableModel implements TableMod
         if (statementType == SqlUtils.SELECT) {
             //theLog.info("Seeing what columns query in file " + originalFilename + " returns...");
             queryTemplate = null;
+            describeFailure = null;
 
             com.mcpdbwizard.pub.QueryStatement deadQuery = null;
 
@@ -1149,12 +1164,53 @@ public class SqlStatementWrangler extends AbstractTableModel implements TableMod
                     queryTemplate = colQuery.execute();
                     colQuery.releaseResources();
                 } catch (Exception e2) {
-                    // Not that one either. Maybe this is a bad SQL statement.
-                    theLog.warning("Unable to determine columns returned by " + originalFilename + ". No matching records will be created.");
+                    // Not that one either. Maybe this is a bad SQL statement. The SECOND failure is
+                    // the one reported: it ran the statement as written, so its message is about
+                    // the statement rather than about the knobbled variant tried first.
+                    describeFailure = conciseDatabaseMessage(e2.getMessage());
+                    if (describeFailure == null) {
+                        describeFailure = e2.getClass().getSimpleName();
+                    }
+                    theLog.warning("Unable to determine columns returned by " + originalFilename
+                            + ": " + describeFailure + ". No matching records will be created.");
                 }
             }
 
         }
+    }
+
+    /**
+     * The part of a failed describe's message a person can act on, on one line.
+     *
+     * <p>{@code QueryStatement} reports a statement that fails twice as
+     * {@code <sql>:<state>:Unable to execute this statement. First Message:<m1> Second Message:<m2>},
+     * and an Oracle 23-line driver appends a help URL to each message. Measured on FREE26 for a
+     * statement naming a table the account cannot see: 480 characters, carrying the ORA-00942 twice.
+     * What is kept is the final message, because it is about the statement as written, with the URL
+     * removed. Whitespace is collapsed because this travels inside a line-oriented log marker.
+     *
+     * <p>A PostgreSQL error's trailing {@code Position: N} is removed too: it counts characters into
+     * the query the generator sent to describe the statement, not into the statement the author
+     * wrote, so on the hotel demo it read 47 for three different statements.
+     *
+     * @return null for a null or blank message
+     */
+    public static String conciseDatabaseMessage(String theMessage) {
+        if (theMessage == null || theMessage.isBlank()) {
+            return null;
+        }
+        String theText = theMessage;
+        int theSecond = theText.lastIndexOf("Second Message:");
+        if (theSecond >= 0) {
+            theText = theText.substring(theSecond + "Second Message:".length());
+        }
+        theText = theText.replaceAll("https?://docs\\.oracle\\.com/error-help/\\S*", "");
+        theText = theText.replaceAll("\\s+Position:\\s*\\d+\\s*$", "");
+        // MariaDB Connector/J prefixes every message with the session it came from, "(conn=2673)",
+        // which differs on every run and names nothing the reader can act on.
+        theText = theText.replaceAll("^\\s*\\(conn=\\d+\\)\\s*", "");
+        theText = theText.trim().replaceAll("\\s+", " ");
+        return theText.isEmpty() ? null : theText;
     }
 
     private String returnDeadQuery(boolean tweakQuery) {

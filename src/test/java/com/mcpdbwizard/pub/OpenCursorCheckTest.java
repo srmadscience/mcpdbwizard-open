@@ -193,4 +193,27 @@ class OpenCursorCheckTest {
         assertEquals(List.of(), theLog.warnings);
         assertEquals(List.of(), theLog.errors);
     }
+
+    /**
+     * {@code assess} is what the web console's Runtime page shows, and the log line is built from
+     * it -- so the page and the server's own log say the same thing about one database.
+     */
+    @Test
+    void assessGivesThePageTheSameVerdictTheLogGets() {
+        assertEquals(null, OpenCursorCheck.assess(connectionReporting("300"), 27), "quiet stays quiet");
+
+        OpenCursorCheck.Finding theEarly = OpenCursorCheck.assess(connectionReporting("300"), 237);
+        assertTrue(theEarly != null && !theEarly.exceeded(), "under the limit is a warning");
+        CapturedLog theLog = new CapturedLog();
+        OpenCursorCheck.warnIfToolsExceedCursors(connectionReporting("300"), 237, theLog.asLog());
+        assertEquals(List.of(theEarly.message()), theLog.warnings, "the log carries assess's sentence");
+
+        assertTrue(OpenCursorCheck.assess(connectionReporting("300"), 300).exceeded(), "at the limit");
+
+        OpenCursorCheck.Finding theUnknown = OpenCursorCheck.assess(connectionReporting(null), 5);
+        assertTrue(theUnknown != null && theUnknown.message().contains("UNKNOWN"),
+                "an unreadable limit is said, not assumed");
+
+        assertEquals(null, OpenCursorCheck.assess(null, 500), "no connection, nothing to judge");
+    }
 }

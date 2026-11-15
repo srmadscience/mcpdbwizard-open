@@ -4957,7 +4957,8 @@ public class SAAdminWrangler extends SADbWrangler {
                     continue;
                 }
                 if (!theStatement.getCreateJava() || theStatement.theMetaData == null) {
-                    String theReason = "no service method was built for it (it produced no metadata)";
+                    String theReason = withDescribeFailure(theStatement.describeFailure,
+                            "no service method was built for it (it produced no metadata)");
                     mrLog.info("MCP: skipping SQL statement " + theStatement.realFilename
                             + " - " + theReason);
                     mcpUnexposed("sql", theStatement.originalFilename, null, theReason);
@@ -4965,6 +4966,7 @@ public class SAAdminWrangler extends SADbWrangler {
                 }
                 String skipReason = mcpSqlStatementUnsupportedReason(theStatement.theMetaData);
                 if (skipReason != null) {
+                    skipReason = withDescribeFailure(theStatement.describeFailure, skipReason);
                     mrLog.info("MCP: skipping SQL statement " + theStatement.realFilename
                             + " - " + skipReason);
                     mcpUnexposed("sql", theStatement.originalFilename, null, skipReason);
@@ -8228,6 +8230,24 @@ public class SAAdminWrangler extends SADbWrangler {
 
     /** Marks the machine-readable sibling of an {@code MCP: skipping} line. */
     public static final String MCP_UNEXPOSED_PREFIX = "MCP-UNEXPOSED|";
+
+    /**
+     * A skip reason led by the database's own complaint, when it made one.
+     *
+     * <p>The reasons above describe what the generator could not build; when the statement never
+     * described at all, that is a consequence, and the cause -- "table or view does not exist",
+     * typically -- is what the reader can act on. So the cause comes FIRST: on Oracle the
+     * consequence reads "return type WsdlRowSet is neither void nor a row array" (measured on
+     * FREE26), which sends a reader looking at return types for a missing table. The original
+     * reason is kept after it. Nothing matches on the reason text; it is displayed. Never decides
+     * exposure.
+     */
+    static String withDescribeFailure(String theDescribeFailure, String theReason) {
+        if (theDescribeFailure == null || theDescribeFailure.isEmpty()) {
+            return theReason;
+        }
+        return "the database could not describe it: " + theDescribeFailure + " (so " + theReason + ")";
+    }
 
     /**
      * Report, in a form a program can read, WHICH CONFIG ENTRY a tool got its description from.

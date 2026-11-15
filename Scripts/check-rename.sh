@@ -474,7 +474,10 @@ else
 # driver's Long/Short/Double to BigDecimal; Oracle's NUMBER is unaffected).
 # 2026-11-14: 567 -> 569. TWO new files, pub/JdbcLogin and JdbcLoginTest (an environment password is
 # passed as a property, never written into the URL, for every driver).
-expect "copyright chain-of-title lines" 569 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
+# 2026-11-15: 569 -> 571. TWO new files, web runtime/OpenCursorNote (the Runtime page's copy of the
+# server's open_cursors warning) and DescribeFailureReasonTest (a statement's skip reason now carries
+# the database's own complaint).
+expect "copyright chain-of-title lines" 571 "$(count '(formerly Orinda Software Ltd, Dublin, Ireland)')"
 fi
 if [ "$PARTIAL" = yes ]; then
     skip_on_partial "Portions Copyright (c) 1999 lines" "a whole-repository total; this tree is the published subset"
